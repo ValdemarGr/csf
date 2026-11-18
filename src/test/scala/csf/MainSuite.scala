@@ -4,9 +4,10 @@ import cats.effect.{ExitCode, IO}
 import cats.syntax.all.*
 import com.monovore.decline.Command
 import fs2.Stream
-import fs2.io.file.Files
+import fs2.io.file.{Files, Path}
 import fs2.io.process.{ProcessBuilder, Processes}
 import munit.CatsEffectSuite
+import scala.concurrent.duration.*
 
 class MainSuite extends CatsEffectSuite {
   private val command = Command(name = "csf", header = "Normalize Scala source")(Main.main)
@@ -15,10 +16,145 @@ class MainSuite extends CatsEffectSuite {
     command.parse(arguments).fold(help => IO.raiseError(new AssertionError(help.toString)), identity)
   }
 
+  private def pipe(source: String, arguments: List[String] = List("-"),
+      directory: Option[Path] = None): IO[(Int, String, String)] = {
+    val classpath = (Iterator.iterate(getClass.getClassLoader)(_.getParent).takeWhile(_ != null)
+      .collect { case loader: java.net.URLClassLoader => loader.getURLs.toVector }.flatten
+      .map(url => java.nio.file.Path.of(url.toURI).toString).toVector ++
+      System.getProperty("java.class.path").split(java.io.File.pathSeparator).toVector)
+      .distinct.mkString(java.io.File.pathSeparator)
+    val javaExecutable = (Path(System.getProperty("java.home")) / "bin" / "java").toString
+    val builder = ProcessBuilder(javaExecutable, List("-cp", classpath, "csf.Main") ++ arguments)
+
+    Processes[IO].spawn(directory.fold(builder)(builder.withWorkingDirectory)).use { process =>
+      (
+        Stream.emit(source).covary[IO].through(fs2.text.utf8.encode).through(process.stdin).compile.drain,
+        process.exitValue,
+        process.stdout.through(fs2.text.utf8.decode).compile.string,
+        process.stderr.through(fs2.text.utf8.decode).compile.string,
+      ).parTupled.map { case (_, exit, stdout, stderr) => (exit, stdout, stderr) }
+    }.timeout(20.seconds)
+  }
+
   test("paths are mandatory") {
     val result = command.parse(Nil)
 
     assert(result.left.exists(_.errors.nonEmpty))
+  }
+
+  test("stdin accepts the dash sentinel and positive columns") {
+    assert(command.parse(List("-")).isRight)
+    assert(command.parse(List("-", "--columns", "40")).isRight)
+    assert(command.parse(List("--columns", "40", "-")).isRight)
+    assert(command.parse(List("./-")).isRight)
+  }
+
+  List(
+    List("-", "Example.scala"),
+    List("Example.scala", "-"),
+    List("-", "-"),
+    List("--write", "-"),
+    List("-", "--write"),
+    List("--check", "-"),
+    List("-", "--check"),
+  ).foreach { arguments =>
+    test(s"stdin rejects mixed inputs and file modes: ${arguments.mkString(" ")}") {
+      assert(command.parse(arguments).left.exists(_.errors.nonEmpty))
+    }
+  }
+
+  List("0", "-1", "forty").foreach { columns =>
+    test(s"stdin rejects invalid columns: $columns") {
+      assert(command.parse(List("-", "--columns", columns)).left.exists(_.errors.nonEmpty))
+    }
+  }
+
+  test("stdin emits only formatted source and succeeds for both changed and canonical buffers") {
+    val source = "object Example{val value=1}"
+
+    for {
+      expected <- IO.fromEither(Formatter.format(source))
+      changed <- pipe(source)
+      canonical <- pipe(expected)
+    } yield {
+      assertNotEquals(source, expected)
+      assertEquals(changed._1, 0, changed._3)
+      assertEquals(changed._2, expected)
+      assertEquals(canonical._1, 0, canonical._3)
+      assertEquals(canonical._2, expected)
+    }
+  }
+
+  test("empty stdin emits no bytes and succeeds") {
+    pipe("").map { case (exit, stdout, stderr) =>
+      assertEquals(exit, 0, stderr)
+      assertEquals(stdout, "")
+    }
+  }
+
+  List(
+    "Unicode and CRLF" -> "object Example{\r\nval message=\"héllo λ 🙂\"\r\n}",
+    "UTF-8 across multiple input buffers" -> s"val message=\"${"λé🙂" * 4096}\"",
+  ).foreach { case (name, source) =>
+    test(s"stdin preserves $name") {
+      for {
+        expected <- IO.fromEither(Formatter.format(source))
+        result <- pipe(source)
+      } yield {
+        assertEquals(result._1, 0, result._3)
+        assertEquals(result._2, expected)
+        assert(!result._2.contains('\r'))
+      }
+    }
+  }
+
+  test("columns controls stdout formatting of the unsaved buffer") {
+    val source = "object Example{val result=combine(firstArgument,secondArgument,thirdArgument)}"
+
+    for {
+      wide <- IO.fromEither(Formatter.format(source))
+      narrow <- IO.fromEither(Formatter.format(source, 40))
+      result <- pipe(source, List("--columns", "40", "-"))
+    } yield {
+      assertNotEquals(narrow, wide)
+      assertEquals(result._1, 0, result._3)
+      assertEquals(result._2, narrow)
+    }
+  }
+
+  test("malformed stdin reports diagnostics without writing partial source to stdout") {
+    pipe("val valid=1\nobject Broken {").map { case (exit, stdout, stderr) =>
+      assertEquals(exit, 2)
+      assertEquals(stdout, "")
+      assert(stderr.contains("error"), stderr)
+      assert(stderr.contains("object Broken"), stderr)
+    }
+  }
+
+  test("stdin ignores filesystem inputs and leaves a literal dash file untouched") {
+    Files[IO].tempDirectory.use { directory =>
+      val path = directory / "-"
+      val broken = directory / "Broken.scala"
+      val invalid = "object Broken {"
+      val source = "object Buffer{val value=1}"
+
+      for {
+        _ <- List(path, broken).traverse_ { file =>
+          Stream.emit(invalid).covary[IO].through(Files[IO].writeUtf8(file)).compile.drain
+        }
+        expected <- IO.fromEither(Formatter.format(source))
+        result <- pipe(source, directory = Some(directory))
+        dashAfter <- Files[IO].readUtf8(path).compile.string
+        brokenAfter <- Files[IO].readUtf8(broken).compile.string
+        remaining <- Files[IO].list(directory).compile.toList
+      } yield {
+        assertEquals(result._1, 0, result._3)
+        assertEquals(result._2, expected)
+        assertEquals(dashAfter, invalid)
+        assertEquals(brokenAfter, invalid)
+        assertEquals(remaining.toSet, Set(path, broken))
+      }
+    }
   }
 
   List(List("--check", "--write"), List("--write", "--check")).foreach { flags =>

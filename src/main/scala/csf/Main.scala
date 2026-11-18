@@ -10,12 +10,12 @@ import fs2.io.file.Path
 
 object Main extends CommandIOApp(
   name = "csf",
-  header = "Normalize Scala 3 source files.",
+  header = "Normalize Scala 3 source files. Use '-' to format stdin to stdout.",
 ) {
   private val write = (
     Opts.flag("check", "Check formatting without changing files.").as(false) orElse
       Opts.flag("write", "Apply formatting changes to files.").as(true)
-  ).withDefault(false)
+  ).orNone
 
   private val columns = Opts.option[Int](
     "columns",
@@ -23,11 +23,31 @@ object Main extends CommandIOApp(
     metavar = "N",
   ).validate("Columns must be greater than zero.")(_ > 0).withDefault(100)
 
-  private val paths = Opts.arguments[java.nio.file.Path]("path").map(_.map(Path.fromNioPath))
+  private val paths = Opts.arguments[java.nio.file.Path]("path | -").map(_.map(Path.fromNioPath))
 
-  def main: Opts[IO[ExitCode]] = (write, columns, paths).mapN { (write, columns, paths) =>
+  def main: Opts[IO[ExitCode]] = (write, columns, paths).tupled.validate(
+    "Use '-' alone, without --check or --write, to format stdin to stdout.",
+  ) { case (write, _, paths) =>
+    !paths.exists(_ == Path("-")) || (paths.length == 1 && write.isEmpty)
+  }.map { case (write, columns, paths) =>
+    if (paths.head == Path("-")) formatStdin(columns)
+    else processFiles(paths.toList, write.getOrElse(false), columns)
+  }
+
+  private def formatStdin(columns: Int): IO[ExitCode] = {
+    fs2.io.stdinUtf8[IO](8192).compile.string.flatMap { source =>
+      IO.delay(Formatter.format(source, columns)).flatMap(IO.fromEither)
+    }.flatMap { formatted =>
+      Stream.emit(formatted).covary[IO].through(fs2.text.utf8.encode)
+        .through(fs2.io.stdout[IO]).compile.drain
+    }.as(ExitCode.Success).handleErrorWith { error =>
+      Console[IO].errorln(error.getMessage).as(ExitCode(2))
+    }
+  }
+
+  private def processFiles(paths: List[Path], write: Boolean, columns: Int): IO[ExitCode] = {
     for {
-      discovered <- Stream.emits(paths.toList).flatMap(FileDiscovery.files).compile.toVector
+      discovered <- Stream.emits(paths).flatMap(FileDiscovery.files).compile.toVector
       (errors, files) = discovered.partitionMap(identity)
       _ <- errors.traverse_(error => Console[IO].errorln(error.toString))
       interactive <- IO(System.console() != null)
