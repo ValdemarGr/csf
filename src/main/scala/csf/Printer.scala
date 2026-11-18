@@ -320,6 +320,39 @@ private[csf] object Printer {
       else Doc.intercalate(hardLine, value.split("\n", -1).iterator.map(Doc.text).toVector).nested(-indent)
     }
 
+    private def hasStripMargin(value: Tree): Boolean = value.parent.exists {
+      case select: Term.Select if (select.qual eq value) && select.name.value == "stripMargin" =>
+        !select.parent.exists {
+          case call: Term.Apply => call.fun eq select
+          case call: Term.ApplyType => call.fun eq select
+          case _ => false
+        }
+      case _ => false
+    }
+
+    private def marginText(value: String): Doc = {
+      val lines = value.split("\n", -1).toVector
+      Doc.text(lines.head) + Doc.cat(lines.tail.map { line =>
+        val content = line.dropWhile(_ <= ' ')
+        val normalized = if (content.startsWith("|")) content else "|" + line
+        hardLine + Doc.text(normalized)
+      })
+    }
+
+    private def canAlignMargins(value: Term.Interpolate): Boolean = {
+      // A leading splice can supply its own margin; adding one would change its value.
+      val markedSplices = value.parts.init.forall { part =>
+        val text = part.value.toString
+        val newline = text.lastIndexOf('\n')
+        newline < 0 || !text.substring(newline + 1).forall(_ <= ' ')
+      }
+      // Alignment must not shift verbatim data inside interpolation expressions.
+      markedSplices && value.args.forall(_.tokens.forall { token =>
+        token.text.indexOf('\n') < 0 ||
+          (token.isInstanceOf[Token.Trivia] && !token.isInstanceOf[Token.Comment])
+      })
+    }
+
     private def statements(
         container: Tree,
         values: Iterable[Tree],
@@ -926,7 +959,8 @@ private[csf] object Printer {
       else contents.tightBracketBy(Doc.char('{'), Doc.char('}'))
     }
 
-    private def literalParts(parts: Iterable[Lit], arguments: Iterable[Tree], indent: Int, interpolated: Boolean): Doc = {
+    private def literalParts(parts: Iterable[Lit], arguments: Iterable[Tree], indent: Int, interpolated: Boolean,
+        stripMargin: Boolean = false): Doc = {
       val expressions = arguments.iterator.map { argument =>
         if (interpolated) interpolationArgument(argument, indent)
         else argument match {
@@ -943,7 +977,7 @@ private[csf] object Printer {
         val splice = if (index < expressions.length) {
           (if (interpolated) Doc.char('$') else Doc.empty) + expressions(index)
         } else Doc.empty
-        docs += verbatim(escaped, indent) + splice
+        docs += (if (stripMargin) marginText(escaped) else verbatim(escaped, indent)) + splice
         index += 1
       }
       Doc.cat(docs)
@@ -952,7 +986,11 @@ private[csf] object Printer {
     private def syntax(value: Tree, indent: Int): Doc = value match {
       case _: Term.Anonymous | _: Type.AnonymousName => Doc.empty
       case name: Name => Doc.text(LeafPrinter.name(name))
-      case literal: Lit => verbatim(LeafPrinter.literal(literal), indent)
+      case literal: Lit =>
+        val text = LeafPrinter.literal(literal)
+        if (text.startsWith("\"\"\"") && hasStripMargin(literal)) {
+          marginText(text).hang(if (text.startsWith("\"\"\"|")) 3 else 2)
+        } else verbatim(text, indent)
       case _: Term => termSyntax(value, indent)
       case _: Type => typeSyntax(value, indent)
       case _: Pat => patternSyntax(value, indent)
@@ -1069,11 +1107,16 @@ private[csf] object Printer {
       case _: Term.EndMarker => Doc.empty
       case interpolation: Term.Interpolate => {
         val prefix = tree(interpolation.prefix, indent)
-        val contents = literalParts(interpolation.parts, interpolation.args, indent, interpolated = true)
         val quote = interpolation.tokens.collectFirst {
           case start: Token.Interpolation.Start => start.text
         }.getOrElse("\"")
-        prefix + Doc.text(quote) + contents + Doc.text(quote)
+        val stripMargin = quote == "\"\"\"" && hasStripMargin(interpolation) && canAlignMargins(interpolation)
+        val contents = literalParts(interpolation.parts, interpolation.args, indent, interpolated = true,
+          stripMargin = stripMargin)
+        val body = Doc.text(quote) + contents + Doc.text(quote)
+        prefix + (if (stripMargin) {
+          body.hang(if (interpolation.parts.head.value.toString.startsWith("|")) 3 else 2)
+        } else body)
       }
       case xml: Term.Xml => literalParts(xml.parts, xml.args, indent, interpolated = false)
       case conditional: Term.If => {
