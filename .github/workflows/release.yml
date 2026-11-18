@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref_type == 'tag' && github.event.deleted == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test and build
+        run: nix develop --no-write-lock-file -c sbt --server -batch 'testOnly *' nativeImage jpackage
+
+      - name: Prepare downloads
+        run: |
+          mkdir -p target/release
+          tar --create --gzip --file target/release/csf-linux-x86_64-native.tar.gz --directory target/native csf
+          cp target/jpackage/csf.tar.gz target/release/csf-linux-x86_64-jpackage.tar.gz
+          cd target/release
+          sha256sum csf-linux-x86_64-native.tar.gz csf-linux-x86_64-jpackage.tar.gz > SHA256SUMS
+
+      - name: Verify extracted downloads
+        run: |
+          smoke_dir=$(mktemp -d)
+          trap 'rm -rf "$smoke_dir"' EXIT
+          mkdir -p "$smoke_dir/native" "$smoke_dir/jpackage" "$smoke_dir/source"
+          tar --extract --gzip --file target/release/csf-linux-x86_64-native.tar.gz --directory "$smoke_dir/native"
+          tar --extract --gzip --file target/release/csf-linux-x86_64-jpackage.tar.gz --directory "$smoke_dir/jpackage"
+          cp examples/*.scala "$smoke_dir/source/"
+          git init --quiet "$smoke_dir/source"
+          "$smoke_dir/native/csf" "$smoke_dir/source" --write
+          "$smoke_dir/native/csf" "$smoke_dir/source" --check
+          JAVA_TOOL_OPTIONS=-XX:AOTMode=required "$smoke_dir/jpackage/csf/bin/csf" "$smoke_dir/source" --check
+
+      - name: Publish release downloads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --generate-notes \
+            target/release/csf-linux-x86_64-native.tar.gz \
+            target/release/csf-linux-x86_64-jpackage.tar.gz \
+            target/release/SHA256SUMS

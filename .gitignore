@@ -1,0 +1,12 @@
+# sbt
+target/
+
+# Scala tooling
+.bsp/
+.bloop/
+.metals/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
