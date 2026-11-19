@@ -85,7 +85,7 @@ class YieldAndCaseClassSuite extends FunSuite {
       "val result=if(outer){for(x<-xs)yield{if(inner){first}}}else{fallback}",
     )
 
-    assert(result.contains("yield if (inner)"), result)
+    assert(result.contains("yield if inner then"), result)
     assert(!result.contains("} yield {"), result)
   }
 

@@ -106,7 +106,7 @@ class AssignmentBodyLayoutSuite extends FunSuite {
 
   test("for-value RHS layout preserves subsequent bindings and footer comments") {
     assertEquals(format("val result=for{value<-values;next=if(ready)use(value)else fallback;last=after(next)}yield last"),
-      "val result =\n  for {\n    value <- values\n    next =\n      if (ready) {\n        use(value)\n      } else {\n        fallback\n      }\n    last = after(next)\n  } yield last\n")
+      "val result =\n  for {\n    value <- values\n    next =\n      if ready then {\n        use(value)\n      } else {\n        fallback\n      }\n    last = after(next)\n  } yield last\n")
     format("val result=for{a<-as;b={next(a)// footer\n};c=after(b)}yield c")
   }
 

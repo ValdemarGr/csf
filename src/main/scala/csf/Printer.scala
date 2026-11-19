@@ -59,16 +59,16 @@ private[csf] object Printer {
       if (multiline) Doc.char('(') + (hardLine + contents).nested(2) + hardLine + Doc.char(')')
       else contents.tightBracketBy(Doc.char('('), Doc.char(')'))
 
-    private def controlCondition(condition: Term, body: Term, keyword: String, indent: Int): Doc = {
-      val showKeyword = controlSyntax == ControlSyntax.New || (condition.origin match {
-        case parsed: Origin.ParsedPartial =>
-          parsed.allInputTokens().findNot(_.isInstanceOf[Token.Trivia | Token.RightParen], parsed.endTokenIdx)
-            .exists(token => token.start < body.begOffset && token.text == keyword)
-        case _ => false
-      })
-      val contents = parenthesized(tree(condition, indent + 2, lineStart = true))
-      contents + (if (showKeyword) Doc.space + Doc.text(keyword) else Doc.empty)
-    }
+    private def controlCondition(condition: Term, keyword: String, indent: Int): Doc =
+      controlSyntax match {
+        case ControlSyntax.New =>
+          val leading = leadingComments(condition, indent + 2, lineStart = true)
+          val contents = if (leading.isEmpty) Doc.space + syntax(condition, indent)
+          else (hardLine + leading + syntax(condition, indent + 2)).nested(2)
+          contents + Doc.space + Doc.text(keyword)
+        case ControlSyntax.Old =>
+          Doc.space + parenthesized(tree(condition, indent + 2, lineStart = true))
+      }
 
     @annotation.tailrec
     private def expression(value: Term): Term = value match {
@@ -1118,9 +1118,9 @@ private[csf] object Printer {
       case repeated: Term.Repeated => atom(repeated.expr, indent) + Doc.char('*')
       case eta: Term.Eta => atom(eta.expr, indent) + Doc.text(" _")
       case loop: Term.While => {
-        val condition = controlCondition(loop.expr, loop.body, "do", indent)
+        val condition = controlCondition(loop.expr, "do", indent)
         val body = requiredBlock(loop.body, indent)
-        Doc.text("while ") + condition + Doc.space + body
+        Doc.text("while") + condition + Doc.space + body
       }
       case loop: Term.Do => {
         val body = requiredBlock(loop.body, indent)
@@ -1144,7 +1144,7 @@ private[csf] object Printer {
       case xml: Term.Xml => literalParts(xml.parts, xml.args, indent, interpolated = false)
       case conditional: Term.If => {
         val mods = modifiers(conditional.mods, indent)
-        val condition = controlCondition(conditional.cond, conditional.thenp, "then", indent)
+        val condition = controlCondition(conditional.cond, "then", indent)
         val thenBranch = requiredBlock(conditional.thenp, indent)
         val elseBranch = if (
           conditional.elsep.isInstanceOf[Lit.Unit] &&
@@ -1153,7 +1153,7 @@ private[csf] object Printer {
           Doc.empty
         } else Doc.text(" else") + spaced(conditional.elsep, indent,
           (_, depth) => elseBody(conditional.elsep, depth))
-        mods + Doc.text("if ") + condition + Doc.space + thenBranch + elseBranch
+        mods + Doc.text("if") + condition + Doc.space + thenBranch + elseBranch
       }
       case matching: Term.Match => {
         val mods = modifiers(matching.mods, indent)

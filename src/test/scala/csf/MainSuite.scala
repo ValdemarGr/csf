@@ -42,6 +42,49 @@ class MainSuite extends CatsEffectSuite {
     assert(result.left.exists(_.errors.nonEmpty))
   }
 
+  test("--init rejects paths and other modes") {
+    List("Example.scala", "-", "--check", "--write").foreach { argument =>
+      assert(command.parse(List("--init", argument)).left.exists(_.errors.nonEmpty))
+      assert(command.parse(List(argument, "--init")).left.exists(_.errors.nonEmpty))
+    }
+  }
+
+  test("--init creates a config that loads the formatter defaults") {
+    Files[IO].tempDirectory.use { directory =>
+      val path = directory / "csf.toml"
+      val source = "def run = if (ready) while (running) tick() else stop()"
+
+      for {
+        expected <- IO.fromEither(Formatter.format(source))
+        initialized <- pipe("", List("--init"), directory = Some(directory))
+        config <- Files[IO].readUtf8(path).compile.string
+        formatted <- pipe(source, directory = Some(directory))
+      } yield {
+        assertEquals(initialized._1, 0, initialized._3)
+        assertEquals(config, "columns = 100\ncontrol-syntax = \"new\"\n")
+        assertEquals(formatted._1, 0, formatted._3)
+        assertEquals(formatted._2, expected)
+      }
+    }
+  }
+
+  test("--init refuses to overwrite an existing config") {
+    Files[IO].tempDirectory.use { directory =>
+      val path = directory / "csf.toml"
+      val existing = "# Custom settings\ncolumns = 80\ncontrol-syntax = \"old\"\n"
+
+      for {
+        _ <- Stream.emit(existing).covary[IO].through(Files[IO].writeUtf8(path)).compile.drain
+        result <- pipe("", List("--init"), directory = Some(directory))
+        actual <- Files[IO].readUtf8(path).compile.string
+      } yield {
+        assertEquals(result._1, 2, result._3)
+        assert(result._3.contains("csf.toml already exists"), result._3)
+        assertEquals(actual, existing)
+      }
+    }
+  }
+
   test("stdin accepts the dash sentinel") {
     assert(command.parse(List("-")).isRight)
     assert(command.parse(List("./-")).isRight)
@@ -132,8 +175,8 @@ class MainSuite extends CatsEffectSuite {
     Files[IO].tempDirectory.use { directory =>
       val nested = directory / "nested"
       val path = nested / "Example.scala"
-      val source = "def run = while (ready) action()"
-      val config = "control-syntax = \"new\"\n"
+      val source = "def run = while ready do action()"
+      val config = "control-syntax = \"old\"\n"
 
       for {
         _ <- Files[IO].createDirectory(nested)
@@ -145,7 +188,7 @@ class MainSuite extends CatsEffectSuite {
         check <- pipe("", List("--check", "nested/Example.scala"), directory = Some(directory))
       } yield {
         assertEquals(write._1, 0, write._3)
-        assertEquals(actual, "def run =\n  while (ready) do {\n    action()\n  }\n")
+        assertEquals(actual, "def run =\n  while (ready) {\n    action()\n  }\n")
         assertEquals(check._1, 0, check._3)
       }
     }
@@ -158,7 +201,7 @@ class MainSuite extends CatsEffectSuite {
     ("negative width", "columns = -1", "columns"),
     ("noninteger width", "columns = \"forty\"", "columns"),
     ("out-of-range width", "columns = 2147483648", "columns"),
-    ("invalid mode", "control-syntax = \"legacy\"", "control-syntax"),
+    ("removed preserve mode", "control-syntax = \"preserve\"", "control-syntax"),
   ).foreach { case (name, config, diagnostic) =>
     test(s"$name in csf.toml fails before writing files") {
       Files[IO].tempDirectory.use { directory =>
@@ -228,6 +271,7 @@ class MainSuite extends CatsEffectSuite {
     val result = command.parse(List("--help"))
 
     assert(result.left.exists(_.errors.isEmpty))
+    assert(result.left.exists(_.toString.contains("--init")))
     assert(result.left.exists(_.toString.contains("--check")))
     assert(result.left.exists(_.toString.contains("--write")))
     assert(result.left.exists(help => !help.toString.contains("--columns")))

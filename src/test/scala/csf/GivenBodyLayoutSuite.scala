@@ -68,7 +68,7 @@ class GivenBodyLayoutSuite extends FunSuite {
 
   test("mandatory multiline given RHS expressions start below equals") {
     assertEquals(format("given answer:Int=if(ready)one else other"),
-      "given answer: Int =\n  if (ready) {\n    one\n  } else {\n    other\n  }\n")
+      "given answer: Int =\n  if ready then {\n    one\n  } else {\n    other\n  }\n")
     val receiver = "r" * 86
     assertEquals(format(s"given result:Result=$receiver.first().second()"),
       s"given result: Result =\n  $receiver\n    .first()\n    .second()\n")
@@ -123,7 +123,7 @@ class GivenBodyLayoutSuite extends FunSuite {
 
   test("nested given aliases indent their RHS below their declaration") {
     assertEquals(format("object Example{given answer:Int=if(ready)one else other}"),
-      "object Example {\n  given answer: Int =\n    if (ready) {\n      one\n    } else {\n      other\n    }\n}\n")
+      "object Example {\n  given answer: Int =\n    if ready then {\n      one\n    } else {\n      other\n    }\n}\n")
   }
 
   test("function and polymorphic result-type parentheses remain in the given signature") {

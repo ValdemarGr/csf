@@ -8,10 +8,10 @@ import scala.meta.*
 import scala.meta.parsers.{Parse, Parsed, ParserOptions}
 
 enum ControlSyntax {
-  case Preserve, New
+  case Old, New
 }
 
-final case class FormatOptions(columns: Int = 100, controlSyntax: ControlSyntax = ControlSyntax.Preserve)
+final case class FormatOptions(columns: Int = 100, controlSyntax: ControlSyntax = ControlSyntax.New)
 
 enum FormatError(message: String) extends RuntimeException(message) {
   case Parse(details: String) extends FormatError(details)

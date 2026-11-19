@@ -90,9 +90,9 @@ class MethodBodyLayoutSuite extends FunSuite {
         |  }""".stripMargin
     val expected =
       """def collapseStatuses(statuses: List[AggregateStatus]): AggregateStatus =
-        |  if (statuses.exists{ _ == Failed }) {
+        |  if statuses.exists{ _ == Failed } then {
         |    Failed
-        |  } else if (statuses.isEmpty || statuses.exists{ _ == Progress }) {
+        |  } else if statuses.isEmpty || statuses.exists{ _ == Progress } then {
         |    Progress
         |  } else {
         |    Completed

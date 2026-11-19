@@ -54,7 +54,7 @@ class ValBodyLayoutSuite extends FunSuite {
 
   test("mandatory multiline conditional and match RHS expressions start below equals") {
     assertEquals(format("val result=if(ready)use(value)else fallback"),
-      "val result =\n  if (ready) {\n    use(value)\n  } else {\n    fallback\n  }\n")
+      "val result =\n  if ready then {\n    use(value)\n  } else {\n    fallback\n  }\n")
     assertEquals(format("val result=input match{case Some(value)=>use(value);case _=>fallback}"),
       "val result =\n  input match {\n    case Some(value) => use(value)\n    case _ => fallback\n  }\n")
   }
@@ -113,6 +113,6 @@ class ValBodyLayoutSuite extends FunSuite {
     assertEquals(format("object Example{val text:String=\"\"\"first\n  second\nlast\"\"\"}"),
       "object Example {\n  val text: String =\n    \"\"\"first\n  second\nlast\"\"\"\n}\n")
     assertEquals(format("object Example{val outer={lazy val inner:Int=if(ready)one else other;val(left,right)=(first,second);use(inner,left,right)}}"),
-      "object Example {\n  val outer = {\n    lazy val inner: Int =\n      if (ready) {\n        one\n      } else {\n        other\n      }\n    val (left, right) = (first, second)\n    use(inner, left, right)\n  }\n}\n")
+      "object Example {\n  val outer = {\n    lazy val inner: Int =\n      if ready then {\n        one\n      } else {\n        other\n      }\n    val (left, right) = (first, second)\n    use(inner, left, right)\n  }\n}\n")
   }
 }

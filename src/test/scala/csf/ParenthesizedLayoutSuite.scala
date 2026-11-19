@@ -87,7 +87,7 @@ class ParenthesizedLayoutSuite extends FunSuite {
 
   test("a required grouped multiline expression breaks its parentheses") {
     check("val result=(if(flag)first else second).value",
-      "val result =\n  (\n    if (flag) {\n      first\n    } else {\n      second\n    }\n  ).value\n")
+      "val result =\n  (\n    if flag then {\n      first\n    } else {\n      second\n    }\n  ).value\n")
   }
 
   test("a line comment forces broken grouping while preserving required parentheses") {

@@ -29,32 +29,55 @@ class ElseIfLayoutSuite extends FunSuite {
     result
   }
 
-  test("explicit then and do survive mixed syntax, nested conditionals, and comments") {
+  test("new control syntax handles nested conditionals and comments in conditions") {
     val result = format(
       """def run =
-        |  if (if ready then true else false) /* then */
+        |  if (/* first check */ if ready then true else false) /* then */
         |    while ready do
         |      use()
         |      finish()
         |  else if other // before then
-        |  then while (ready) /* do */ wait()
+        |  then while (// keep checking
+        |    ready) /* do */ wait()
         |""".stripMargin)
 
-    assertEquals(" then \\{".r.findAllIn(result).length, 2, result)
-    assertEquals(" do \\{".r.findAllIn(result).length, 1, result)
-    assert(result.contains("while (ready) {"), result)
+    assertEquals(" then \\{".r.findAllIn(result).length, 3, result)
+    assertEquals(" do \\{".r.findAllIn(result).length, 2, result)
+    assert(result.contains("if ready then {"), result)
+    assert(result.contains("while ready do {"), result)
   }
 
-  test("new control syntax adds then and do to legacy if and while") {
-    assertEquals(
-      format("def run = if (ready) while (running) step() else stop()",
-        FormatOptions(controlSyntax = ControlSyntax.New)),
-      "def run =\n  if (ready) then {\n    while (running) do {\n      step()\n    }\n  } else {\n    stop()\n  }\n",
-    )
+  test("each mode canonicalizes both input styles to the same if and while output") {
+    val old = FormatOptions(controlSyntax = ControlSyntax.Old)
+    val legacy = "def run = if (ready && allowed) while (running) step() else stop()"
+    val modern = "def run = if ready && allowed then while running do step() else stop()"
+    val newOutput =
+      "def run =\n  if ready && allowed then {\n    while running do {\n      step()\n    }\n  } else {\n    stop()\n  }\n"
+    val oldOutput =
+      "def run =\n  if (ready && allowed) {\n    while (running) {\n      step()\n    }\n  } else {\n    stop()\n  }\n"
+
+    List(legacy, modern).foreach { source =>
+      assertEquals(format(source), newOutput)
+      assertEquals(format(source, old), oldOutput)
+    }
+  }
+
+  test("new control syntax retains required grouping and braced condition blocks") {
+    val source = """def run =
+      |  if { val x = ready; x } then
+      |    while (ready || allowed) && running do step()
+      |  else stop()
+      |""".stripMargin
+    val result = format(source, FormatOptions(columns = 32))
+
+    assert(result.contains("if {\n"), result)
+    assert(result.contains("} then {"), result)
+    assert(result.contains("while (ready || allowed) &&"), result)
+    assert(result.contains("running do {"), result)
   }
 
   test("direct and comment-free blocked else-if branches share their compact layout") {
-    val expected = "val result =\n  if (first) {\n    one\n  } else if (second) {\n    two\n  } else {\n    other\n  }\n"
+    val expected = "val result =\n  if first then {\n    one\n  } else if second then {\n    two\n  } else {\n    other\n  }\n"
 
     assertEquals(format("val result=if(first)one else if(second)two else other"), expected)
     assertEquals(format("val result=if(first)one else{if(second)two else other}"), expected)
@@ -62,17 +85,17 @@ class ElseIfLayoutSuite extends FunSuite {
 
   test("long mixed direct and blocked else-if chains do not accumulate nesting") {
     assertEquals(format("val result=if(first)one else{if(second)two else if(third)three else{if(fourth)four else other}}"),
-      "val result =\n  if (first) {\n    one\n  } else if (second) {\n    two\n  } else if (third) {\n    three\n  } else if (fourth) {\n    four\n  } else {\n    other\n  }\n")
+      "val result =\n  if first then {\n    one\n  } else if second then {\n    two\n  } else if third then {\n    three\n  } else if fourth then {\n    four\n  } else {\n    other\n  }\n")
   }
 
   test("a nested then-branch conditional cannot take ownership of its outer else") {
     assertEquals(format("val result=if(outer){if(inner)left}else{if(next)right else fallback}"),
-      "val result =\n  if (outer) {\n    if (inner) {\n      left\n    }\n  } else if (next) {\n    right\n  } else {\n    fallback\n  }\n")
+      "val result =\n  if outer then {\n    if inner then {\n      left\n    }\n  } else if next then {\n    right\n  } else {\n    fallback\n  }\n")
   }
 
   test("comments before a direct else-if stay between else and the nested conditional") {
     val blockComment = format("val result=if(first)one else /* before */ if(second)two else other")
-    assert(blockComment.contains("else\n  /* before */\n  if (second)"), blockComment)
+    assert(blockComment.contains("else\n  /* before */\n  if second then"), blockComment)
     format("val result=if(first)one else // before\nif(second)two else other")
   }
 
@@ -90,13 +113,13 @@ class ElseIfLayoutSuite extends FunSuite {
 
   test("multistatement else blocks retain the scope of their local declaration") {
     assertEquals(format("val result=if(first)one else{val next=prepare();if(second)use(next)else fallback}"),
-      "val result =\n  if (first) {\n    one\n  } else {\n    val next = prepare()\n    if (second) {\n      use(next)\n    } else {\n      fallback\n    }\n  }\n")
+      "val result =\n  if first then {\n    one\n  } else {\n    val next = prepare()\n    if second then {\n      use(next)\n    } else {\n      fallback\n    }\n  }\n")
   }
 
   test("else-if chains retain explicit unit else branches and omit absent branches") {
     assertEquals(format("val result=if(first)one else if(second)two else()"),
-      "val result =\n  if (first) {\n    one\n  } else if (second) {\n    two\n  } else {\n    ()\n  }\n")
+      "val result =\n  if first then {\n    one\n  } else if second then {\n    two\n  } else {\n    ()\n  }\n")
     assertEquals(format("val result=if(first)one else if(second)two"),
-      "val result =\n  if (first) {\n    one\n  } else if (second) {\n    two\n  }\n")
+      "val result =\n  if first then {\n    one\n  } else if second then {\n    two\n  }\n")
   }
 }

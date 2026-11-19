@@ -19,7 +19,13 @@ object Main extends CommandIOApp(
 
   private val paths = Opts.arguments[java.nio.file.Path]("path | -").map(_.map(Path.fromNioPath))
 
-  def main: Opts[IO[ExitCode]] = (write, paths).tupled.validate(
+  def main: Opts[IO[ExitCode]] = Opts.flag("init", "Create ./csf.toml with default settings.").as(
+    Config.init.as(ExitCode.Success).handleErrorWith { error =>
+      Console[IO].errorln(error.getMessage).as(ExitCode(2))
+    },
+  ) orElse format
+
+  private def format: Opts[IO[ExitCode]] = (write, paths).tupled.validate(
     "Use '-' alone, without --check or --write, to format stdin to stdout.",
   ) { case (write, paths) =>
     !paths.exists(_ == Path("-")) || (paths.length == 1 && write.isEmpty)
