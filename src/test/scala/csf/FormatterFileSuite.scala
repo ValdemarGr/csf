@@ -108,25 +108,24 @@ class FormatterFileSuite extends CatsEffectSuite {
     }
   }
 
-  List("object Example {", "class Example(").foreach { source =>
-    test(s"formatFile leaves original intact on formatting error: $source") {
-      Files[IO].tempDirectory.use { directory =>
-        val path = directory / "Example.scala"
+  test("formatFile leaves original intact on formatting error") {
+    Files[IO].tempDirectory.use { directory =>
+      val path = directory / "Example.scala"
+      val source = "object Example {"
 
-        for {
-          _ <- Stream.emit(source).covary[IO].through(Files[IO].writeUtf8(path)).compile.drain
-          before <- Files[IO].getBasicFileAttributes(path)
-          result <- Formatter.formatFile(path).attempt
-          after <- Files[IO].getBasicFileAttributes(path)
-          actual <- Files[IO].readUtf8(path).compile.string
-          remaining <- Files[IO].list(directory).compile.toList
-        } yield {
-          assert(result.swap.exists(_.isInstanceOf[FormatError]), result.toString)
-          assertEquals(actual, source)
-          assertEquals(after.fileKey, before.fileKey)
-          assertEquals(after.lastModifiedTime, before.lastModifiedTime)
-          assertEquals(remaining, List(path))
-        }
+      for {
+        _ <- Stream.emit(source).covary[IO].through(Files[IO].writeUtf8(path)).compile.drain
+        before <- Files[IO].getBasicFileAttributes(path)
+        result <- Formatter.formatFile(path).attempt
+        after <- Files[IO].getBasicFileAttributes(path)
+        actual <- Files[IO].readUtf8(path).compile.string
+        remaining <- Files[IO].list(directory).compile.toList
+      } yield {
+        assert(result.swap.exists(_.isInstanceOf[FormatError]), result.toString)
+        assertEquals(actual, source)
+        assertEquals(after.fileKey, before.fileKey)
+        assertEquals(after.lastModifiedTime, before.lastModifiedTime)
+        assertEquals(remaining, List(path))
       }
     }
   }

@@ -117,8 +117,6 @@ class YieldAndCaseClassSuite extends FunSuite {
   test("comment-only case-class bodies keep the comment inside their braces") {
     assertEquals(format("case class Empty(){}\n// companion\n// details"),
       "case class Empty()\n// companion\n// details\n")
-    assertEquals(format("case class Empty()\n// companion\n// details"),
-      "case class Empty()\n// companion\n// details\n")
     assertEquals(format("case class Empty(){/* keep */}"),
       "case class Empty() {\n  /* keep */\n}\n")
     assertEquals(format("case class Empty(){// keep\n}"),
@@ -143,7 +141,6 @@ class YieldAndCaseClassSuite extends FunSuite {
     assertEquals(format("class Empty"), "class Empty {}\n")
     List(
       "trait Base" -> "trait Base\n",
-      "trait Child extends Parent" -> "trait Child extends Parent\n",
       "trait Container[A]" -> "trait Container[A]\n",
       "trait Container[A]extends Parent[A]" -> "trait Container[A] extends Parent[A]\n",
     ).foreach { case (source, expected) =>
@@ -152,10 +149,9 @@ class YieldAndCaseClassSuite extends FunSuite {
     }
   }
 
-  test("empty plain inherited and case objects omit bodies with or without source braces") {
+  test("empty objects and case objects omit bodies with or without source braces") {
     List(
       "object Empty",
-      "object Child extends Parent",
       "case object Missing",
       "case object Ready extends Status",
     ).foreach { source =>

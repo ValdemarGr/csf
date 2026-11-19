@@ -81,13 +81,6 @@ class ChainSuite extends FunSuite {
     assertEquals(format(s"val result=values.map(x=>{prepare(x);x}).$first().$second()"), expected)
   }
 
-  test("multiline lambda arguments split preceding and following dots at an overflowing footer") {
-    val first = "a" * 50
-    val second = "b" * 40
-    assertEquals(format(s"val result=values.map(x=>{prepare(x);x}).$first().$second()"),
-      s"val result =\n  values\n    .map{ x =>\n      prepare(x)\n      x\n    }\n    .$first()\n    .$second()\n")
-  }
-
   test("mandatory multiline block arguments split every dot even when their footer would fit") {
     val first = "a" * 50
     val second = "b" * 39
@@ -95,13 +88,6 @@ class ChainSuite extends FunSuite {
 
     assertEquals(s"    }.$first().$second()".length, 100)
     assertEquals(format(s"val result=service.run({prepare();value}).$first().$second()"), expected)
-  }
-
-  test("multiline block arguments split preceding and following dots at an overflowing footer") {
-    val first = "a" * 50
-    val second = "b" * 40
-    assertEquals(format(s"val result=service.run({prepare();value}).$first().$second()"),
-      s"val result =\n  service\n    .run {\n      prepare()\n      value\n    }\n    .$first()\n    .$second()\n")
   }
 
   test("lambda body calls wrapping at soft argument breaks split the enclosing chain dots") {

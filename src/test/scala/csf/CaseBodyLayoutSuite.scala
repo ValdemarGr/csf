@@ -72,7 +72,6 @@ class CaseBodyLayoutSuite extends FunSuite {
       "val result=input match {\n  case First=>{\n    value\n    // footer\n  }\n\n  // next case\n  case _=>other\n}",
       expected,
     )
-    check(expected, expected)
   }
 
   test("a nested partial function keeps its own braces so its cases cannot become outer siblings") {

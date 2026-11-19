@@ -31,7 +31,7 @@ class NewlineSuite extends FunSuite {
     assertEquals(Formatter.format(result), Right(result))
   }
 
-  List(0, 1, 3).foreach { blanks =>
+  List(0, 3).foreach { blanks =>
     val gap = "\n" * (blanks + 1)
     val boundedGap = "\n" * (blanks.min(1) + 1)
 

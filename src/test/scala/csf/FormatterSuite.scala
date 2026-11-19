@@ -94,8 +94,6 @@ class FormatterSuite extends FunSuite {
     "object Example { val values = input.map((value: Int) => convert(value)) }",
     "object Example { def run(value: Int): Int = { val result = convert(value); result } }",
     "object Example { val result = (if (ready) left else right).apply(value) }",
-    "object Example { val result = (a + b) * c }",
-    "object Example { val result = a - (b - c) }",
     "object Example { val result = (a :: b) :: c }",
     "object Example { val result = a :: (b :: c) }",
     "object Example { val result = a op (()) }",

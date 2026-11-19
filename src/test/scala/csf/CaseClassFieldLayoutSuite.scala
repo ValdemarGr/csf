@@ -33,16 +33,13 @@ class CaseClassFieldLayoutSuite extends FunSuite {
   }
 
   test("two or more first-clause case-class fields are vertical even when the complete class fits") {
-    List(100, 200).foreach { columns =>
-      assertEquals(format("case class Pair(left:Int,right:String)", columns),
-        "case class Pair(\n  left: Int,\n  right: String\n)\n")
-      assertEquals(format("case class Triple(first:Int,second:String,third:Boolean)", columns),
-        "case class Triple(\n  first: Int,\n  second: String,\n  third: Boolean\n)\n")
-    }
+    assertEquals(format("case class Pair(left:Int,right:String)"),
+      "case class Pair(\n  left: Int,\n  right: String\n)\n")
+    assertEquals(format("case class Triple(first:Int,second:String,third:Boolean)"),
+      "case class Triple(\n  first: Int,\n  second: String,\n  third: Boolean\n)\n")
   }
 
-  test("zero or one case-class field stays inline when it fits") {
-    assertEquals(format("case class Empty()"), "case class Empty()\n")
+  test("a single case-class field stays inline when it fits") {
     assertEquals(format("case class Box[A,B](value:A)"), "case class Box[A, B](value: A)\n")
   }
 

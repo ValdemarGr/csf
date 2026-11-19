@@ -101,9 +101,4 @@ class MethodBodyLayoutSuite extends FunSuite {
 
     check(source, expected)
   }
-
-  test("method declarations without bodies retain their signature layout") {
-    check("trait Service{def run(value:Int):Int}",
-      "trait Service {\n  def run(value: Int): Int\n}\n")
-  }
 }

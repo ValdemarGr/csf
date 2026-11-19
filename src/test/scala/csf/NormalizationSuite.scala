@@ -143,14 +143,15 @@ class NormalizationSuite extends FunSuite {
   }
 
   test("empty and multistatement method blocks remain blocks") {
-    List("def idle={}", "def run={val value=prepare();use(value)}").foreach { source =>
+    List(
+      "def idle={}" -> "def idle={{{}}}",
+      "def run={val value=prepare();use(value)}" -> "def run={{{val value=prepare();use(value)}}}",
+    ).foreach { case (source, wrapped) =>
       val result = format(source)
       val definition = result.parse[Source].get.stats.head.asInstanceOf[Defn.Def]
       assert(definition.body.isInstanceOf[Term.Block], result)
+      assertEquals(format(wrapped), result)
     }
-    assertEquals(format("def idle={{{}}}"), format("def idle={}"))
-    assertEquals(format("def run={{{val value=prepare();use(value)}}}"),
-      format("def run={val value=prepare();use(value)}"))
   }
 
   test("a scoped standalone block cannot become an argument to its preceding statement") {

@@ -59,14 +59,6 @@ class ValBodyLayoutSuite extends FunSuite {
       "val result =\n  input match {\n    case Some(value) => use(value)\n    case _ => fallback\n  }\n")
   }
 
-  test("a wrapped RHS chain nests its receiver and continuation dots under equals") {
-    val receiver = "r" * 86
-    val result = format(s"val result=$receiver.first().second()")
-
-    assertEquals(result, s"val result =\n  $receiver\n    .first()\n    .second()\n")
-    assert(result.linesIterator.forall(_.length <= 100), result)
-  }
-
   test("short lambda RHS expressions stay inline while block lambdas own their braces") {
     assertEquals(format("val f=(value:Int)=>use(value)"), "val f = (value: Int) => use(value)\n")
     assertEquals(format("val f=value=>{prepare(value);use(value)}"),

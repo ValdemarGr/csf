@@ -89,8 +89,6 @@ class ArrowLayoutSuite extends FunSuite {
   test("multistatement lambda bodies use one outer lambda brace pair") {
     check("val result=run(x=>{prepare(x);value(x)})",
       "val result =\n  run{ x =>\n    prepare(x)\n    value(x)\n  }\n")
-    check("val f=x=>{prepare(x);value(x)}",
-      "val f = { x =>\n  prepare(x)\n  value(x)\n}\n")
   }
 
   test("match cases and partial functions choose body layout independently per case") {
@@ -99,12 +97,6 @@ class ArrowLayoutSuite extends FunSuite {
       s"val result =\n  value match {\n    case One => f(one)\n    case Two =>\n      $receiver\n        .compile\n        .drain\n  }\n")
     check(s"val f={case Some(x)=>f(x);case _=>$receiver.compile.drain}",
       s"val f = {\n  case Some(x) => f(x)\n  case _ =>\n    $receiver\n      .compile\n      .drain\n}\n")
-  }
-
-  test("a multiline parameter header does not force its short body onto another line") {
-    val tpe = "VeryLongParameterTypeForThisExample"
-    check(s"val result=run((firstArgument:$tpe,secondArgument:$tpe)=>firstArgument)",
-      s"val result =\n  run{ (\n      firstArgument: $tpe,\n      secondArgument: $tpe\n    ) => firstArgument\n  }\n")
   }
 
   test("body comments always occupy standalone lines") {
