@@ -10,33 +10,31 @@ import fs2.io.file.Path
 
 object Main extends CommandIOApp(
   name = "csf",
-  header = "Normalize Scala 3 source files. Use '-' to format stdin to stdout.",
+  header = "Normalize Scala 3 source files. Load optional ./csf.toml. Use '-' to format stdin to stdout.",
 ) {
   private val write = (
     Opts.flag("check", "Check formatting without changing files.").as(false) orElse
       Opts.flag("write", "Apply formatting changes to files.").as(true)
   ).orNone
 
-  private val columns = Opts.option[Int](
-    "columns",
-    "Set output line width (default: 100).",
-    metavar = "N",
-  ).validate("Columns must be greater than zero.")(_ > 0).withDefault(100)
-
   private val paths = Opts.arguments[java.nio.file.Path]("path | -").map(_.map(Path.fromNioPath))
 
-  def main: Opts[IO[ExitCode]] = (write, columns, paths).tupled.validate(
+  def main: Opts[IO[ExitCode]] = (write, paths).tupled.validate(
     "Use '-' alone, without --check or --write, to format stdin to stdout.",
-  ) { case (write, _, paths) =>
+  ) { case (write, paths) =>
     !paths.exists(_ == Path("-")) || (paths.length == 1 && write.isEmpty)
-  }.map { case (write, columns, paths) =>
-    if (paths.head == Path("-")) formatStdin(columns)
-    else processFiles(paths.toList, write.getOrElse(false), columns)
+  }.map { case (write, paths) =>
+    Config.load.attempt.flatMap {
+      case Left(error) => Console[IO].errorln(error.getMessage).as(ExitCode(2))
+      case Right(options) =>
+        if (paths.head == Path("-")) formatStdin(options)
+        else processFiles(paths.toList, write.getOrElse(false), options)
+    }
   }
 
-  private def formatStdin(columns: Int): IO[ExitCode] = {
+  private def formatStdin(options: FormatOptions): IO[ExitCode] = {
     fs2.io.stdinUtf8[IO](8192).compile.string.flatMap { source =>
-      IO.delay(Formatter.format(source, columns)).flatMap(IO.fromEither)
+      IO.delay(Formatter.format(source, options)).flatMap(IO.fromEither)
     }.flatMap { formatted =>
       Stream.emit(formatted).covary[IO].through(fs2.text.utf8.encode)
         .through(fs2.io.stdout[IO]).compile.drain
@@ -45,7 +43,7 @@ object Main extends CommandIOApp(
     }
   }
 
-  private def processFiles(paths: List[Path], write: Boolean, columns: Int): IO[ExitCode] = {
+  private def processFiles(paths: List[Path], write: Boolean, options: FormatOptions): IO[ExitCode] = {
     for {
       discovered <- Stream.emits(paths).flatMap(FileDiscovery.files).compile.toVector
       (errors, files) = discovered.partitionMap(identity)
@@ -56,7 +54,7 @@ object Main extends CommandIOApp(
       results <- Stream.eval(Ref.of[IO, Int](0)).flatMap { index =>
         val nextPath = index.getAndUpdate(_ + 1).map(files.lift)
         val worker = Stream.repeatEval(nextPath).unNoneTerminate.evalMap { path =>
-          process(path, write, columns).attempt.map(path -> _)
+          process(path, write, options).attempt.map(path -> _)
         }
         Stream.emits(List.fill(parallelism)(worker)).covary[IO].parJoin(parallelism)
       }.zipWithIndex.evalMap { case (result @ (path, _), index) =>
@@ -76,9 +74,9 @@ object Main extends CommandIOApp(
     })
   }
 
-  private def process(path: Path, write: Boolean, columns: Int): IO[Int] = {
-    if (write) Formatter.formatFile(path, columns).as(0)
-    else Formatter.checkFile(path, columns).map(unchanged => if (unchanged) 0 else 1)
+  private def process(path: Path, write: Boolean, options: FormatOptions): IO[Int] = {
+    if (write) Formatter.formatFile(path, options).as(0)
+    else Formatter.checkFile(path, options).map(unchanged => if (unchanged) 0 else 1)
   }
 
   private def progress(current: Int, total: Int, path: Path): IO[Unit] = {

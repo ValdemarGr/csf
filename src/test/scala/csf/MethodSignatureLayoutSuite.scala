@@ -39,6 +39,13 @@ class MethodSignatureLayoutSuite extends FunSuite {
       "trait Api {\n  def f(value: Int)(using Context): Result\n}\n")
   }
 
+  test("an unquoted operator directly before a result colon needs a separator") {
+    assertEquals(format("def unary_- : Result=value"), "def unary_- : Result = value\n")
+    assertEquals(format("trait Api{def + : Result}"), "trait Api {\n  def + : Result\n}\n")
+    assertEquals(format("def unary_-() : Result=value"), "def unary_-(): Result = value\n")
+    assertEquals(format("def `unary_-` : Result=value"), "def `unary_-`: Result = value\n")
+  }
+
   test("insert breaks its first parameter clause before contextual parameters or return type") {
     val source = "object Repository{def insert(header:CommandHeader,token:M2MToken)" +
       "(using ses:Ses,xa:Transaction[IO]):IO[Unit]=DB.insert(NonEmptyChain.one(header->token))}"

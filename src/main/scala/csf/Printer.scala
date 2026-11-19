@@ -4,6 +4,7 @@ import org.typelevel.paiges.Doc
 import scala.collection.mutable.ArrayBuffer
 import scala.meta.*
 import scala.meta.internal.prettyprinters.TreeSyntacticGroup
+import scala.meta.internal.tokens.Chars.isOperatorPart
 import scala.meta.trees.Origin
 
 private[csf] object Printer {
@@ -27,12 +28,12 @@ private[csf] object Printer {
     case CloseParens(before: Int)
   }
 
-  def print(source: Source): Either[FormatError, Doc] = {
-    try Right(new Renderer(source).print())
+  def print(source: Source, controlSyntax: ControlSyntax): Either[FormatError, Doc] = {
+    try Right(new Renderer(source, controlSyntax).print())
     catch { case error: FormatError => Left(error) }
   }
 
-  private final class Renderer(source: Source) {
+  private final class Renderer(source: Source, controlSyntax: ControlSyntax) {
     private given Dialect = dialects.Scala3
     private val commentTokens = source.tokens.iterator.collect {
       case comment: Token.Comment => comment
@@ -57,6 +58,17 @@ private[csf] object Printer {
     private def parenthesized(contents: Doc, multiline: Boolean): Doc =
       if (multiline) Doc.char('(') + (hardLine + contents).nested(2) + hardLine + Doc.char(')')
       else contents.tightBracketBy(Doc.char('('), Doc.char(')'))
+
+    private def controlCondition(condition: Term, body: Term, keyword: String, indent: Int): Doc = {
+      val showKeyword = controlSyntax == ControlSyntax.New || (condition.origin match {
+        case parsed: Origin.ParsedPartial =>
+          parsed.allInputTokens().findNot(_.isInstanceOf[Token.Trivia | Token.RightParen], parsed.endTokenIdx)
+            .exists(token => token.start < body.begOffset && token.text == keyword)
+        case _ => false
+      })
+      val contents = parenthesized(tree(condition, indent + 2, lineStart = true))
+      contents + (if (showKeyword) Doc.space + Doc.text(keyword) else Doc.empty)
+    }
 
     @annotation.tailrec
     private def expression(value: Term): Term = value match {
@@ -216,7 +228,14 @@ private[csf] object Printer {
       }
     }
 
-    private def methodSignature(groups: Iterable[Member.ParamClauseGroup], result: Option[Type], indent: Int): Doc = {
+    private def methodSignature(
+        name: Term.Name,
+        groups: Iterable[Member.ParamClauseGroup],
+        result: Option[Type],
+        indent: Int,
+    ): Doc = {
+      val spelling = LeafPrinter.name(name)
+      val nameDoc = spaced(name, indent, (_, _) => Doc.text(spelling))
       val clauses = ArrayBuffer.empty[Doc]
       var prefix = Doc.empty
       groups.iterator.foreach { group =>
@@ -229,13 +248,17 @@ private[csf] object Printer {
           prefix = Doc.empty
         }
       }
-      var suffix = prefix + result.fold(Doc.empty)(value => Doc.char(':') + arrowTail(2)(tree(value, indent + 2, lineStart = true)))
+      var suffix = prefix + result.fold(Doc.empty) { value =>
+        val colon = if (groups.isEmpty && !spelling.endsWith("`") &&
+          name.value.lastOption.exists(isOperatorPart)) Doc.text(" :") else Doc.char(':')
+        colon + arrowTail(2)(tree(value, indent + 2, lineStart = true))
+      }
       var index = clauses.length - 1
       while (index >= 0) {
         suffix = (clauses(index) + suffix).grouped
         index -= 1
       }
-      suffix
+      nameDoc + suffix
     }
 
     private def firstCommentLine(before: Int): Option[Int] = {
@@ -1095,7 +1118,7 @@ private[csf] object Printer {
       case repeated: Term.Repeated => atom(repeated.expr, indent) + Doc.char('*')
       case eta: Term.Eta => atom(eta.expr, indent) + Doc.text(" _")
       case loop: Term.While => {
-        val condition = parenthesized(tree(loop.expr, indent + 2, lineStart = true))
+        val condition = controlCondition(loop.expr, loop.body, "do", indent)
         val body = requiredBlock(loop.body, indent)
         Doc.text("while ") + condition + Doc.space + body
       }
@@ -1121,7 +1144,7 @@ private[csf] object Printer {
       case xml: Term.Xml => literalParts(xml.parts, xml.args, indent, interpolated = false)
       case conditional: Term.If => {
         val mods = modifiers(conditional.mods, indent)
-        val condition = parenthesized(tree(conditional.cond, indent + 2, lineStart = true))
+        val condition = controlCondition(conditional.cond, conditional.thenp, "then", indent)
         val thenBranch = requiredBlock(conditional.thenp, indent)
         val elseBranch = if (
           conditional.elsep.isInstanceOf[Lit.Unit] &&
@@ -1408,10 +1431,9 @@ private[csf] object Printer {
       }
       case definition: Defn.Def => {
         val mods = modifiers(definition.mods, indent)
-        val name = spaced(definition.name, indent)
-        val signature = methodSignature(definition.paramClauseGroups, definition.decltpe, indent)
+        val signature = methodSignature(definition.name, definition.paramClauseGroups, definition.decltpe, indent)
         val body = assignmentBody(definition.body, indent)
-        mods + Doc.text("def") + name + signature + body
+        mods + Doc.text("def") + signature + body
       }
       case group: Member.ParamClauseGroup => {
         val types = tree(group.tparamClause, indent)
@@ -1600,9 +1622,8 @@ private[csf] object Printer {
       }
       case declaration: Decl.Def => {
         val mods = modifiers(declaration.mods, indent)
-        val name = spaced(declaration.name, indent)
-        val signature = methodSignature(declaration.paramClauseGroups, Some(declaration.decltpe), indent)
-        mods + Doc.text("def") + name + signature
+        val signature = methodSignature(declaration.name, declaration.paramClauseGroups, Some(declaration.decltpe), indent)
+        mods + Doc.text("def") + signature
       }
       case declaration: Decl.Type => {
         val mods = modifiers(declaration.mods, indent)

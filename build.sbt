@@ -31,6 +31,7 @@ libraryDependencies ++= Seq(
   "org.scalameta" %% "scalameta" % "4.17.4",
   "org.typelevel" %% "paiges-core" % "0.4.4",
   "com.monovore" %% "decline-effect" % "2.6.2",
+  "org.tomlj" % "tomlj" % "1.1.1",
   "io.github.java-diff-utils" % "java-diff-utils" % "4.18",
   "org.typelevel" %% "munit-cats-effect" % "2.2.1" % Test,
 )

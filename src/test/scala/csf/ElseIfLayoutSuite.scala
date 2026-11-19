@@ -14,8 +14,8 @@ class ElseIfLayoutSuite extends FunSuite {
     case other => other
   }
 
-  private def format(source: String): String = {
-    val result = Formatter.format(source).fold(error => fail(error.getMessage), identity)
+  private def format(source: String, options: FormatOptions = FormatOptions()): String = {
+    val result = Formatter.format(source, options).fold(error => fail(error.getMessage), identity)
     val reparsed = {
       given Dialect = dialects.Scala3.withAllowSignificantIndentation(false)
       result.parse[Source].get
@@ -25,8 +25,32 @@ class ElseIfLayoutSuite extends FunSuite {
       result.tokenize.get.collect { case comment: Token.Comment => comment.text }.toList,
       source.tokenize.get.collect { case comment: Token.Comment => comment.text }.toList,
     )
-    assertEquals(Formatter.format(result), Right(result))
+    assertEquals(Formatter.format(result, options), Right(result))
     result
+  }
+
+  test("explicit then and do survive mixed syntax, nested conditionals, and comments") {
+    val result = format(
+      """def run =
+        |  if (if ready then true else false) /* then */
+        |    while ready do
+        |      use()
+        |      finish()
+        |  else if other // before then
+        |  then while (ready) /* do */ wait()
+        |""".stripMargin)
+
+    assertEquals(" then \\{".r.findAllIn(result).length, 2, result)
+    assertEquals(" do \\{".r.findAllIn(result).length, 1, result)
+    assert(result.contains("while (ready) {"), result)
+  }
+
+  test("new control syntax adds then and do to legacy if and while") {
+    assertEquals(
+      format("def run = if (ready) while (running) step() else stop()",
+        FormatOptions(controlSyntax = ControlSyntax.New)),
+      "def run =\n  if (ready) then {\n    while (running) do {\n      step()\n    }\n  } else {\n    stop()\n  }\n",
+    )
   }
 
   test("direct and comment-free blocked else-if branches share their compact layout") {

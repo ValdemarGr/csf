@@ -42,10 +42,8 @@ class MainSuite extends CatsEffectSuite {
     assert(result.left.exists(_.errors.nonEmpty))
   }
 
-  test("stdin accepts the dash sentinel and positive columns") {
+  test("stdin accepts the dash sentinel") {
     assert(command.parse(List("-")).isRight)
-    assert(command.parse(List("-", "--columns", "40")).isRight)
-    assert(command.parse(List("--columns", "40", "-")).isRight)
     assert(command.parse(List("./-")).isRight)
   }
 
@@ -63,10 +61,9 @@ class MainSuite extends CatsEffectSuite {
     }
   }
 
-  List("0", "-1", "forty").foreach { columns =>
-    test(s"stdin rejects invalid columns: $columns") {
-      assert(command.parse(List("-", "--columns", columns)).left.exists(_.errors.nonEmpty))
-    }
+  test("CLI rejects the removed --columns flag") {
+    assert(command.parse(List("--columns", "40", "-")).left.exists(_.errors.nonEmpty))
+    assert(command.parse(List("--columns", "40", "Example.scala")).left.exists(_.errors.nonEmpty))
   }
 
   test("stdin emits only formatted source and succeeds for both changed and canonical buffers") {
@@ -108,17 +105,79 @@ class MainSuite extends CatsEffectSuite {
     }
   }
 
-  test("columns controls stdout formatting of the unsaved buffer") {
-    val source = "object Example{val result=combine(firstArgument,secondArgument,thirdArgument)}"
+  test("stdin reads csf.toml from its working directory or defaults to 100 columns") {
+    Files[IO].tempDirectory.use { directory =>
+      val source = "def run=if(ready)combine(firstArgument,secondArgument,thirdArgument)else fallback()"
+      val config = "# Formatter settings\ncolumns = 40\ncontrol-syntax = \"new\"\n"
+      val narrow = FormatOptions(columns = 40, controlSyntax = ControlSyntax.New)
 
-    for {
-      wide <- IO.fromEither(Formatter.format(source))
-      narrow <- IO.fromEither(Formatter.format(source, 40))
-      result <- pipe(source, List("--columns", "40", "-"))
-    } yield {
-      assertNotEquals(narrow, wide)
-      assertEquals(result._1, 0, result._3)
-      assertEquals(result._2, narrow)
+      for {
+        expectedDefault <- IO.fromEither(Formatter.format(source, 100))
+        unconfigured <- pipe(source, directory = Some(directory))
+        _ <- Stream.emit(config).covary[IO].through(Files[IO].writeUtf8(directory / "csf.toml")).compile.drain
+        expectedNarrow <- IO.fromEither(Formatter.format(source, narrow))
+        expectedWide <- IO.fromEither(Formatter.format(source, narrow.copy(columns = 100)))
+        configured <- pipe(source, directory = Some(directory))
+      } yield {
+        assertNotEquals(expectedNarrow, expectedWide)
+        assertEquals(unconfigured._1, 0, unconfigured._3)
+        assertEquals(unconfigured._2, expectedDefault)
+        assertEquals(configured._1, 0, configured._3)
+        assertEquals(configured._2, expectedNarrow)
+      }
+    }
+  }
+
+  test("write and check use csf.toml in the working directory for a nested source file") {
+    Files[IO].tempDirectory.use { directory =>
+      val nested = directory / "nested"
+      val path = nested / "Example.scala"
+      val source = "def run = while (ready) action()"
+      val config = "control-syntax = \"new\"\n"
+
+      for {
+        _ <- Files[IO].createDirectory(nested)
+        _ <- Stream.emit(config).covary[IO].through(Files[IO].writeUtf8(directory / "csf.toml")).compile.drain
+        _ <- Stream.emit("invalid").covary[IO].through(Files[IO].writeUtf8(nested / "csf.toml")).compile.drain
+        _ <- Stream.emit(source).covary[IO].through(Files[IO].writeUtf8(path)).compile.drain
+        write <- pipe("", List("--write", "nested/Example.scala"), directory = Some(directory))
+        actual <- Files[IO].readUtf8(path).compile.string
+        check <- pipe("", List("--check", "nested/Example.scala"), directory = Some(directory))
+      } yield {
+        assertEquals(write._1, 0, write._3)
+        assertEquals(actual, "def run =\n  while (ready) do {\n    action()\n  }\n")
+        assertEquals(check._1, 0, check._3)
+      }
+    }
+  }
+
+  List(
+    ("malformed TOML", "columns = [", "end of input"),
+    ("unknown option", "column = 40", "column"),
+    ("zero width", "columns = 0", "columns"),
+    ("negative width", "columns = -1", "columns"),
+    ("noninteger width", "columns = \"forty\"", "columns"),
+    ("out-of-range width", "columns = 2147483648", "columns"),
+    ("invalid mode", "control-syntax = \"legacy\"", "control-syntax"),
+  ).foreach { case (name, config, diagnostic) =>
+    test(s"$name in csf.toml fails before writing files") {
+      Files[IO].tempDirectory.use { directory =>
+        val path = directory / "Example.scala"
+        val source = "object Example{val value=1}"
+
+        for {
+          _ <- Stream.emit(config).covary[IO].through(Files[IO].writeUtf8(directory / "csf.toml")).compile.drain
+          _ <- Stream.emit(source).covary[IO].through(Files[IO].writeUtf8(path)).compile.drain
+          result <- pipe("", List("--write", "Example.scala"), directory = Some(directory))
+          actual <- Files[IO].readUtf8(path).compile.string
+        } yield {
+          assertEquals(result._1, 2, result._3)
+          assertEquals(result._2, "")
+          assert(result._3.contains("csf.toml"), result._3)
+          assert(result._3.contains(diagnostic), result._3)
+          assertEquals(actual, source)
+        }
+      }
     }
   }
 
@@ -171,21 +230,7 @@ class MainSuite extends CatsEffectSuite {
     assert(result.left.exists(_.errors.isEmpty))
     assert(result.left.exists(_.toString.contains("--check")))
     assert(result.left.exists(_.toString.contains("--write")))
-    assert(result.left.exists(_.toString.contains("--columns")))
-  }
-
-  List("0", "-1").foreach { columns =>
-    test(s"nonpositive columns are rejected: $columns") {
-      val result = command.parse(List("--columns", columns, "Example.scala"))
-
-      assert(result.left.exists(_.errors.exists(_.contains("Columns must be greater than zero."))))
-    }
-  }
-
-  test("noninteger columns are rejected") {
-    val result = command.parse(List("--columns", "forty", "Example.scala"))
-
-    assert(result.left.exists(_.errors.nonEmpty))
+    assert(result.left.exists(help => !help.toString.contains("--columns")))
   }
 
   List(Nil, List("--check")).foreach { flags =>
@@ -244,40 +289,43 @@ class MainSuite extends CatsEffectSuite {
     }
   }
 
-  test("columns controls write and check for explicit files and directory inputs") {
+  test("TOML columns control write and check for explicit files and directory inputs") {
     Files[IO].tempDirectory.use { directory =>
       val nested = directory / "nested"
       val first = directory / "First.scala"
       val second = nested / "Second.scala"
+      val config = directory / "csf.toml"
       val files = List(first, second)
-      val arguments = List(first.toString, nested.toString)
+      val arguments = List("First.scala", "nested")
       val source = "object Example{val result=combine(firstArgument,secondArgument,thirdArgument)}"
 
       for {
-        wide <- IO.fromEither(Formatter.format(source))
+        wide <- IO.fromEither(Formatter.format(source, 100))
         narrow <- IO.fromEither(Formatter.format(source, 40))
         _ <- Files[IO].createDirectory(nested)
         _ <- files.traverse_ { path =>
           Stream.emit(source).covary[IO].through(Files[IO].writeUtf8(path)).compile.drain
         }
-        defaultWrite <- run("--write" :: arguments)
+        defaultWrite <- pipe("", "--write" :: arguments, directory = Some(directory))
         defaultContents <- files.traverse(path => Files[IO].readUtf8(path).compile.string)
-        narrowCheckBefore <- run(List("--columns", "40", "--check") ++ arguments)
+        _ <- Stream.emit("columns = 40\n").covary[IO].through(Files[IO].writeUtf8(config)).compile.drain
+        narrowCheckBefore <- pipe("", "--check" :: arguments, directory = Some(directory))
         checkedContents <- files.traverse(path => Files[IO].readUtf8(path).compile.string)
-        narrowWrite <- run(List("--columns", "40", "--write") ++ arguments)
+        narrowWrite <- pipe("", "--write" :: arguments, directory = Some(directory))
         narrowContents <- files.traverse(path => Files[IO].readUtf8(path).compile.string)
-        narrowCheckAfter <- run(List("--columns", "40", "--check") ++ arguments)
-        defaultCheckAfter <- run("--check" :: arguments)
+        narrowCheckAfter <- pipe("", "--check" :: arguments, directory = Some(directory))
+        _ <- Files[IO].delete(config)
+        defaultCheckAfter <- pipe("", "--check" :: arguments, directory = Some(directory))
       } yield {
         assertNotEquals(narrow, wide)
-        assertEquals(defaultWrite, ExitCode.Success)
+        assertEquals(defaultWrite._1, 0, defaultWrite._3)
         assertEquals(defaultContents, List(wide, wide))
-        assertEquals(narrowCheckBefore, ExitCode(1))
+        assertEquals(narrowCheckBefore._1, 1, narrowCheckBefore._3)
         assertEquals(checkedContents, defaultContents)
-        assertEquals(narrowWrite, ExitCode.Success)
+        assertEquals(narrowWrite._1, 0, narrowWrite._3)
         assertEquals(narrowContents, List(narrow, narrow))
-        assertEquals(narrowCheckAfter, ExitCode.Success)
-        assertEquals(defaultCheckAfter, ExitCode(1))
+        assertEquals(narrowCheckAfter._1, 0, narrowCheckAfter._3)
+        assertEquals(defaultCheckAfter._1, 1, defaultCheckAfter._3)
       }
     }
   }
