@@ -20,7 +20,7 @@ private[csf] object Printer {
 
   private enum BodyExprDoc {
     case Direct(doc: Doc)
-    case Prio(header: Doc, leading: Doc, opening: Doc, flat: Option[Doc], dotIndent: Int, tail: Int => Doc)
+    case Prio(header: Doc, leading: Doc, opening: Doc, flat: Option[(Doc, Int)], dotIndent: Int, tail: Int => Doc)
   }
 
   private enum InfixWork {
@@ -112,11 +112,9 @@ private[csf] object Printer {
             case _ if rhsCommentNeedsBlock(term, canonical) =>
               Direct(Doc.space + requiredBlock(term, indent, compactEmpty = false))
             case _: Term.PartialFunction => Direct(Doc.space + tree(term, indent))
-            case call: Term.Apply if header.nonEmpty =>
+            case call: Term.Apply =>
               header.flatMap(prioritizedAssignment(term, call, _, indent)).getOrElse {
-                if (header.exists(callOpenerFits(_, call, indent))) {
-                  Direct(Doc.space + tree(term, indent, lineStart = true))
-                } else Direct(arrowTail(2)(tree(term, indent + 2, lineStart = true)))
+                Direct(arrowTail(2)(tree(term, indent + 2, lineStart = true)))
               }
             case _ => Direct(arrowTail(2)(tree(term, indent + 2, lineStart = true)))
           }
@@ -129,8 +127,7 @@ private[csf] object Printer {
         case Direct(doc) => doc
         case Prio(header, leading, opening, flat, dotIndent, tail) =>
           val (head, rhsOffset, tailOffset) = flat match {
-            case Some(doc) =>
-              val width = doc.maxWidth
+            case Some((doc, width)) =>
               if (leading.isEmpty && assignmentHeaderWidth(header, indent) + 1 + width <= options.columns) {
                 (doc, 0, 0)
               } else if (indent + 2 + width <= options.columns) (doc, 2, 0)
@@ -145,42 +142,49 @@ private[csf] object Printer {
       })
     }
 
-    private def prioritizedAssignment(term: Term, call: Term.Apply, header: Doc, indent: Int): Option[BodyExprDoc] =
-      call.argClause.values match {
-        case (block: Term.Block) :: Nil if bracedCall(call.argClause) && hasSelection(call.fun) =>
+    private def prioritizedAssignment(term: Term, call: Term.Apply, header: Doc, indent: Int): Option[BodyExprDoc] = {
+      val arguments = call.argClause
+      val parenthesized = arguments.values.nonEmpty && openingToken(arguments).exists(_.isInstanceOf[Token.LeftParen])
+      val lambda = arguments.values match {
+        case (block: Term.Block) :: Nil if bracedCall(arguments) =>
           block.stats match {
-            case (function: Term.FunctionTerm) :: Nil if bracedLambda(function) =>
-              val rhsIndent = indent + 2
-              val leading = leadingComments(term, rhsIndent, lineStart = true)
-              val before = hardLineCount
-              val (callee, dotIndent) = chainParts(call.fun, rhsIndent)
-              val beforeHeader = hardLineCount
-              val head = bracedArrowHead(lambdaHeader(function, rhsIndent + dotIndent + 2))
-              val multilineHeader = hardLineCount != beforeHeader
-              val opening = callee + head.nested(dotIndent)
-              val flat = Option.when(hardLineCount == before)(opening.flatten)
-              Some(BodyExprDoc.Prio(header, leading, opening, flat, dotIndent, depth => {
-                val body = closeArrowArgument(arrowTail(2)(lambdaStatements(function, function.body, depth + 2)),
-                  multiline = multilineHeader)
-                val remaining = tokenComments(call.argClause, call.argClause.endOffset, depth)
-                body + (if (remaining.isEmpty) Doc.empty else hardLine + remaining + hardLine)
-              }))
+            case (function: Term.FunctionTerm) :: Nil if bracedLambda(function) => Some(function)
             case _ => None
           }
         case _ => None
       }
+      Option.when(parenthesized || lambda.nonEmpty) {
+        val rhsIndent = indent + 2
+        val leading = leadingComments(term, rhsIndent, lineStart = true)
+        val before = hardLineCount
+        val (callee, dotIndent) = chainParts(call.fun, rhsIndent)
+        val (head, tail) = lambda match {
+          case Some(function) =>
+            val beforeHeader = hardLineCount
+            val head = bracedArrowHead(lambdaHeader(function, rhsIndent + dotIndent + 2))
+            val multilineHeader = hardLineCount != beforeHeader
+            (head, (depth: Int) => {
+              val body = closeArrowArgument(arrowTail(2)(lambdaStatements(function, function.body, depth + 2)),
+                multiline = multilineHeader)
+              val remaining = tokenComments(arguments, arguments.endOffset, depth)
+              body + (if (remaining.isEmpty) Doc.empty else hardLine + remaining + hardLine)
+            })
+          case None => (Doc.empty, (depth: Int) => tree(arguments, depth))
+        }
+        val opening = callee + head.nested(dotIndent)
+        val flat = Option.when(hardLineCount == before) {
+          val doc = opening.flatten
+          // Parenthesized scopes emit their opening delimiter with the arguments.
+          val preview = if (parenthesized) doc + Doc.char('(') else doc
+          (doc, preview.maxWidth)
+        }
+        BodyExprDoc.Prio(header, leading, opening, flat, dotIndent, tail)
+      }
+    }
 
     private def assignmentHeaderWidth(header: Doc, indent: Int): Int = {
       val prefix = (Doc.spaces(indent) + (header + assignmentSeparator).nested(indent)).render(options.columns)
       prefix.length - prefix.lastIndexOf('\n') - 1
-    }
-
-    private def callOpenerFits(header: Doc, call: Term.Apply, indent: Int): Boolean = call.fun match {
-      case name: Term.Name if call.argClause.values.nonEmpty &&
-          openingToken(call.argClause).exists(_.isInstanceOf[Token.LeftParen]) &&
-          firstCommentLine(name.begOffset).isEmpty =>
-        assignmentHeaderWidth(header, indent) + LeafPrinter.name(name).length + 2 <= options.columns
-      case _ => false
     }
 
     private def argumentAssignmentBody(block: Term.Block, indent: Int): Doc = {
@@ -729,14 +733,6 @@ private[csf] object Printer {
       case _ => true
     }
 
-    @annotation.tailrec
-    private def hasSelection(value: Term): Boolean = expression(value) match {
-      case _: Term.Select => true
-      case call: Term.Apply => hasSelection(call.fun)
-      case call: Term.ApplyType => hasSelection(call.fun)
-      case _ => false
-    }
-
     private def chain(value: Term, indent: Int): Doc = {
       val before = hardLineCount
       val (doc, dotIndent) = chainParts(value, indent)
@@ -765,8 +761,8 @@ private[csf] object Printer {
         }
       }
       val breakable = selections >= 2 && expressionChain(value)
-      val baseDoc = suffixes.last match {
-          case _: Term.Select => selectQualifier(base, indent)
+      val baseDoc = suffixes.lastOption match {
+          case Some(_: Term.Select) => selectQualifier(base, indent)
           case _ => atom(base, indent)
       }
       var prefix = baseDoc

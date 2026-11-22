@@ -59,7 +59,7 @@ class ChainSuite extends FunSuite {
       s"val result =\n  $overflowingReceiver\n    .first()\n    .second()\n")
   }
 
-  test("a terminal braced lambda moves below equals before splitting the chain dots") {
+  test("terminal braced and parenthesized arguments move below equals before splitting the chain dots") {
     val source = "val x=a.b.d.e.f{y=>work(y);y}"
     val inline = "val x = a.b.d.e.f{ y =>\n  work(y)\n  y\n}\n"
     val belowEquals = "val x =\n  a.b.d.e.f{ y =>\n    work(y)\n    y\n  }\n"
@@ -72,6 +72,27 @@ class ChainSuite extends FunSuite {
     assertEquals(format(source, columns = belowEqualsWidth - 1), dotted)
     assertEquals(format("val x=a.b[Int](z).d.e.f{y=>work(y);y}"),
       "val x = a.b[Int](z).d.e.f{ y =>\n  work(y)\n  y\n}\n")
+
+    val curried = "val x=a.b[Int](z).d.e.f(seed)(prepare(left),prepare(right))"
+    val curriedInline = "val x = a.b[Int](z).d.e.f(seed)(\n  prepare(left),\n  prepare(right)\n)\n"
+    val curriedBelowEquals = "val x =\n  a.b[Int](z).d.e.f(seed)(\n    prepare(left),\n    prepare(right)\n  )\n"
+    val curriedDotted = "val x =\n  a\n    .b[Int](z)\n    .d\n    .e\n    .f(seed)(\n" +
+      "      prepare(left),\n      prepare(right)\n    )\n"
+    val curriedInlineWidth = curriedInline.linesIterator.next().length
+    val curriedBelowEqualsWidth = curriedBelowEquals.linesIterator.drop(1).next().length
+
+    assertEquals(format(curried, columns = curriedInlineWidth), curriedInline)
+    assertEquals(format(curried, columns = curriedBelowEqualsWidth), curriedBelowEquals)
+    assertEquals(format(curried, columns = curriedBelowEqualsWidth - 1), curriedDotted)
+  }
+
+  test("qualified calls keep the opener inline when their arguments wrap") {
+    val source =
+      "val input = TextInput.register(env.context.commands, env.context.queue, env.context.frees, env.context.pending)"
+
+    assertEquals(format(source),
+      "val input = TextInput.register(\n  env.context.commands,\n  env.context.queue,\n" +
+        "  env.context.frees,\n  env.context.pending\n)\n")
   }
 
   test("overflowing parameterless chains use one shared continuation indent") {

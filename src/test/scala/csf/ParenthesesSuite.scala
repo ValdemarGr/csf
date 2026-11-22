@@ -31,8 +31,7 @@ class ParenthesesSuite extends FunSuite {
 
   test("parenthesized lambda arguments retain their braced bodies") {
     val result = format("object X { val result = values.map((value: Int) => { val next = value + 1; next }) }")
-    assert(result.contains("values.map("), result)
-    assert(result.contains("(value: Int) =>\n        {\n"), result)
+    assert(result.contains("val result = values.map(\n    (value: Int) =>\n      {\n"), result)
   }
 
   test("untyped lambda parameters omit redundant parentheses") {

@@ -74,7 +74,7 @@ class PartialFunctionLayoutSuite extends FunSuite {
     check("val result=values.map{case x=>f(x) // footer\n}",
       "val result =\n  values.map{ case x =>\n    f(x)\n    // footer\n  }\n")
     check("val result=values.collect({/* leading */case x=>f(x)} // footer\n)",
-      "val result =\n  values.collect(\n    {\n      /* leading */\n      case x => f(x)\n    }\n    // footer\n  )\n")
+      "val result = values.collect(\n  {\n    /* leading */\n    case x => f(x)\n  }\n  // footer\n)\n")
   }
 
   test("explicit multistatement case bodies omit their outer braces") {
