@@ -75,18 +75,20 @@ class ChainSuite extends FunSuite {
   test("mandatory multiline lambda arguments split every dot even when their footer would fit 100 columns") {
     val first = "a" * 50
     val second = "b" * 39
-    val expected = s"val result =\n  values\n    .map{ x =>\n      prepare(x)\n      x\n    }\n    .$first()\n    .$second()\n"
+    val expected = "val result =\n  values\n    .map(\n      x =>\n        {\n          prepare(x)\n          x\n        }\n" +
+      s"    )\n    .$first()\n    .$second()\n"
 
-    assertEquals(s"    }.$first().$second()".length, 100)
+    assertEquals(s"    ).$first().$second()".length, 100)
     assertEquals(format(s"val result=values.map(x=>{prepare(x);x}).$first().$second()"), expected)
   }
 
   test("mandatory multiline block arguments split every dot even when their footer would fit") {
     val first = "a" * 50
     val second = "b" * 39
-    val expected = s"val result =\n  service\n    .run {\n      prepare()\n      value\n    }\n    .$first()\n    .$second()\n"
+    val expected = "val result =\n  service\n    .run(\n      {\n        prepare()\n        value\n      }\n    )\n" +
+      s"    .$first()\n    .$second()\n"
 
-    assertEquals(s"    }.$first().$second()".length, 100)
+    assertEquals(s"    ).$first().$second()".length, 100)
     assertEquals(format(s"val result=service.run({prepare();value}).$first().$second()"), expected)
   }
 
@@ -95,9 +97,9 @@ class ChainSuite extends FunSuite {
     val second = "second" + "Argument" * 5
     val result = format(s"val result=values.map(x=>combine($first,$second)).filter(p)")
 
-    assert(result.startsWith("val result =\n  values\n    .map{ x =>\n"), result)
+    assert(result.startsWith("val result =\n  values\n    .map(\n      x =>\n"), result)
     assert(result.contains("combine(\n"), result)
-    assert(result.endsWith("\n    }\n    .filter(p)\n"), result)
+    assert(result.endsWith("\n    )\n    .filter(p)\n"), result)
     assert(result.linesIterator.forall(_.length <= 100), result)
   }
 
@@ -144,10 +146,10 @@ class ChainSuite extends FunSuite {
     val source = "val result=TemplatingDB.getMailGenContentHxl(o,id).flatMapF(R.fromOption(UpsertError.MailContentNotFound(id))(_))"
 
     assertEquals(format(source, columns = 200),
-      "val result = TemplatingDB.getMailGenContentHxl(o, id).flatMapF{ R.fromOption(UpsertError.MailContentNotFound(id))(_) }\n")
+      "val result = TemplatingDB.getMailGenContentHxl(o, id).flatMapF(R.fromOption(UpsertError.MailContentNotFound(id))(_))\n")
   }
 
-  test("the wrapped Sales mail-content call aligns its lambda brace with the method step") {
+  test("the wrapped Sales mail-content call aligns its closing parenthesis with the method step") {
     val expression = "TemplatingDB.getMailGenContentHxl(o,id).flatMapF(R.fromOption(UpsertError.MailContentNotFound(id))(_))"
     val source = "object A{" * 7 + expression + "}" * 7
     val opening = (0 until 7).map(depth => "  " * depth + "object A {").mkString("\n") + "\n"
@@ -155,9 +157,9 @@ class ChainSuite extends FunSuite {
     val expected = opening +
       "              TemplatingDB\n" +
       "                .getMailGenContentHxl(o, id)\n" +
-      "                .flatMapF{\n" +
+      "                .flatMapF(\n" +
       "                  R.fromOption(UpsertError.MailContentNotFound(id))(_)\n" +
-      "                }\n" + closing
+      "                )\n" + closing
     val result = format(source, columns = 78)
 
     assertEquals(result, expected)

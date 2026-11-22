@@ -68,11 +68,11 @@ class InterpolationLayoutSuite extends FunSuite {
       "val result =\n  s\"value ${\n    val next = prepare()\n    finish(next)\n  } done\"\n")
   }
 
-  test("block arguments inside interpolation retain their required braces without wrapping another block") {
+  test("block arguments inside interpolation retain both delimiters without wrapping another block") {
     val result = format("val result=s\"${service.run({prepare();value})}\"")
 
     assert(result.startsWith("val result =\n  s\"${\n"), result)
-    assert(result.contains("service.run {\n"), result)
+    assert(result.contains("service.run(\n      {\n"), result)
     assert(!result.contains("${\n    {"), result)
   }
 

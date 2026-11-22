@@ -26,14 +26,15 @@ private[csf] object Printer {
         chainOperator: Boolean, attached: Boolean)
     case CloseBlock(value: Term.Block, indent: Int, leading: Doc)
     case CloseParens(before: Int)
+    case CloseArgument(value: Term.ArgClause, indent: Int, before: Int)
   }
 
-  def print(source: Source, controlSyntax: ControlSyntax): Either[FormatError, Doc] = {
-    try Right(new Renderer(source, controlSyntax).print())
+  def print(source: Source, options: FormatOptions): Either[FormatError, Doc] = {
+    try Right(new Renderer(source, options).print())
     catch { case error: FormatError => Left(error) }
   }
 
-  private final class Renderer(source: Source, controlSyntax: ControlSyntax) {
+  private final class Renderer(source: Source, options: FormatOptions) {
     private given Dialect = dialects.Scala3
     private val commentTokens = source.tokens.iterator.collect {
       case comment: Token.Comment => comment
@@ -60,7 +61,7 @@ private[csf] object Printer {
       else contents.tightBracketBy(Doc.char('('), Doc.char(')'))
 
     private def controlCondition(condition: Term, keyword: String, indent: Int): Doc =
-      controlSyntax match {
+      options.controlSyntax match {
         case ControlSyntax.New =>
           val leading = leadingComments(condition, indent + 2, lineStart = true)
           val contents = if (leading.isEmpty) Doc.space + syntax(condition, indent)
@@ -72,7 +73,7 @@ private[csf] object Printer {
 
     @annotation.tailrec
     private def expression(value: Term): Term = value match {
-      case block: Term.Block if !block.parent.exists {
+      case block: Term.Block if !argumentBlock(block) && !block.parent.exists {
             case _: Term.QuotedMacroExpr | _: Term.SplicedMacroExpr => true
             case _ => false
           } => block.stats match {
@@ -93,16 +94,20 @@ private[csf] object Printer {
       else (Doc.line + contents).nested(indent).grouped
     }
 
-    private def assignmentBody(value: Tree, indent: Int, allowBreak: Boolean = true): Doc = {
+    private def assignmentBody(value: Tree, indent: Int, allowBreak: Boolean = true,
+        header: Option[Doc] = None): Doc = {
       val body = if (!allowBreak) namedAssignmentBody(value, indent) else value match {
+        case block: Term.Block if argumentBlock(block) => argumentAssignmentBody(block, indent)
         case term: Term => {
           val canonical = expression(term)
           canonical match {
             case _: Term.Block => Doc.space + requiredBlock(term, indent, compactEmpty = false)
-            case _ if bracedArgument(term) || bracedLambda(canonical) => Doc.space + tree(term, indent)
+            case _ if bracedLambda(canonical) => Doc.space + tree(term, indent)
             case _ if rhsCommentNeedsBlock(term, canonical) =>
               Doc.space + requiredBlock(term, indent, compactEmpty = false)
             case _: Term.PartialFunction => Doc.space + tree(term, indent)
+            case call: Term.Apply if header.exists(callOpenerFits(_, call, indent)) =>
+              Doc.space + tree(term, indent, lineStart = true)
             case _ => arrowTail(2)(tree(term, indent + 2, lineStart = true))
           }
         }
@@ -111,6 +116,28 @@ private[csf] object Printer {
         case _ => arrowTail(2)(tree(value, indent + 2, lineStart = true))
       }
       assignmentSeparator + body
+    }
+
+    private def callOpenerFits(header: Doc, call: Term.Apply, indent: Int): Boolean = call.fun match {
+      case name: Term.Name if call.argClause.values.nonEmpty &&
+          openingToken(call.argClause).exists(_.isInstanceOf[Token.LeftParen]) &&
+          firstCommentLine(name.begOffset).isEmpty =>
+        val prefix = (Doc.spaces(indent) + (header + assignmentSeparator).nested(indent)).render(options.columns)
+        val lineLength = prefix.length - prefix.lastIndexOf('\n') - 1
+        lineLength + LeafPrinter.name(name).length + 2 <= options.columns
+      case _ => false
+    }
+
+    private def argumentAssignmentBody(block: Term.Block, indent: Int): Doc = {
+      val owner = block.parent.getOrElse(block)
+      var index = commentIndex
+      while (index < commentTokens.length && commentTokens(index).end <= block.endOffset) index += 1
+      val footer = index < commentTokens.length && commentTokens(index).end <= owner.endOffset
+      if (footer) Doc.space + parenthesized {
+        val contents = tree(block, indent + 2, lineStart = true)
+        contents + hardLine + tokenComments(owner, owner.endOffset, indent + 2)
+      }
+      else Doc.space + tree(block, indent)
     }
 
     private def namedAssignmentBody(value: Tree, indent: Int): Doc = {
@@ -273,12 +300,16 @@ private[csf] object Printer {
         case _: Pkg.Body | _: Ctor.Block | _: Term.EnumeratorsBlock => true
         case _: Term.ArgClause | _: Type.ArgClause | _: Term.ParamClause | _: Type.ParamClause |
             _: Member.ParamClauseGroup | _: Ctor.Primary => true
+        case term: (Term.Block | Term.PartialFunction) if term.parent.exists {
+            case arguments: Term.ArgClause => openingToken(arguments).exists(_.isInstanceOf[Token.LeftParen])
+            case _ => false
+          } => false
         case _: Term.PartialFunction => true
         case block: Term.Block if expression(block) eq block => true
         case template: Template if template.earlyClause.isEmpty && template.inits.isEmpty &&
             template.derives.isEmpty && canOmitEmptyBody(template.body) => true
         case body: Template.Body if canOmitEmptyBody(body) => true
-        case block: Term.Block if bracedArgument(block) || bracedLambda(expression(block)) =>
+        case block: Term.Block if bracedLambda(expression(block)) =>
           expression(block).isInstanceOf[Term.AnonymousFunction | Term.FunctionTerm | Term.PolyFunction |
             Term.PartialFunction]
         case function: (Term.AnonymousFunction | Term.FunctionTerm | Term.PolyFunction) => bracedLambda(function)
@@ -393,12 +424,20 @@ private[csf] object Printer {
         val firstLine = firstCommentLine(value.begOffset).getOrElse(value.pos.startLine)
         val before = comments(value.begOffset, indent, separate = true)
         val beforeBodyComments = commentIndex
-        val body = emit(value, indent)
+        val body = value match {
+          case function: Term.FunctionLike if iterator.hasNext && argumentClause(function).nonEmpty =>
+            parenthesized(emit(function, indent + 2))
+          case _ => emit(value, indent)
+        }
         val afterBodyComments = commentIndex
         val gap = if (previousLine < 0) Doc.empty
         else if (boundaryComments) hardLine
         else statementGap(previousLine, firstLine, indent, previousDeclaration || declaration)
-        val needsSeparator = iterator.hasNext && continuesPreviousStatement(iterator.head)
+        val needsSeparator = iterator.hasNext && ((value, iterator.head) match {
+          case (definition: Defn.Val, next: Term)
+              if expression(next).isInstanceOf[Lit.Unit] && expression(definition.rhs).isInstanceOf[Lit.Unit] => false
+          case (_, next) => continuesPreviousStatement(next)
+        })
         val semicolon = value.origin match {
           case parsed: Origin.ParsedPartial if needsSeparator =>
             parsed.allInputTokens().findNot(_.isInstanceOf[Token.Trivia], parsed.endTokenIdx, Int.MaxValue)
@@ -729,17 +768,18 @@ private[csf] object Printer {
           val lhs = docs.remove(docs.length - 1)
           val op = spaced(call.op, indent)
           val types = if (call.targClause.values.isEmpty) Doc.empty else tree(call.targClause, indent)
-          val attached = call.argClause.values match {
-            case single :: Nil => attachedArgument(single)
-            case _ => false
-          }
+          val attached = bracedCall(call.argClause)
           work += InfixWork.Finish(leading, before, commentIndex, lhs, op, types, chained, call.op.value == "*:", attached)
           val rhsIndent = if (chained || attached) indent else indent + 2
           call.argClause.values match {
             case _ if attached => docs += tree(call.argClause, rhsIndent)
             case single :: Nil if expression(single).isInstanceOf[Lit.Unit | Term.Tuple] =>
               docs += tree(call.argClause, rhsIndent)
-            case single :: Nil if call.argClause.mod.isEmpty =>
+            case single :: Nil if parenthesizedInfixArgument(call.argClause, single) &&
+                expression(single).isInstanceOf[Term.ApplyInfix] =>
+              work += InfixWork.CloseArgument(call.argClause, rhsIndent + 2, hardLineCount)
+              work += InfixWork.Visit(single, rhsIndent + 2, chained = false)
+            case single :: Nil if call.argClause.mod.isEmpty && !parenthesizedInfixArgument(call.argClause, single) =>
               work += InfixWork.Operand(call, single, rhsIndent)
             case _ => docs += tree(call.argClause, rhsIndent)
           }
@@ -760,52 +800,75 @@ private[csf] object Printer {
         case InfixWork.CloseParens(before) =>
           val contents = docs.remove(docs.length - 1)
           docs += parenthesized(contents, hardLineCount != before)
+        case InfixWork.CloseArgument(value, indent, before) =>
+          val contents = docs.remove(docs.length - 1)
+          val footer = tokenComments(value, value.endOffset, indent)
+          val body = if (footer.isEmpty) contents else contents + hardLine + footer
+          docs += parenthesized(body, hardLineCount != before)
       }
       docs.head
     }
 
-    private def bracedArgument(value: Tree): Boolean = {
-      val needsBraces = value match {
-        case term: Term => expression(term) match {
-          case _: Term.FunctionTerm | _: Term.AnonymousFunction | _: Term.PolyFunction |
-              _: Term.Block | _: Term.PartialFunction => true
-          case _ => false
-        }
+    private def openingToken(value: Tree): Option[Token] = value.origin match {
+      case parsed: Origin.ParsedPartial if !parsed.isEmpty =>
+        Some(parsed.allInputTokens()(parsed.begTokenIdx))
+      case _ => None
+    }
+
+    private def argumentBlock(block: Term.Block): Boolean =
+      openingToken(block).exists {
+        case _: Token.LeftBrace => block.stats.headOption.forall(_.begOffset > block.begOffset)
+        case _: Token.Colon => true
         case _ => false
-      }
-      needsBraces && argumentClause(value).nonEmpty
+      } && argumentClause(block).nonEmpty
+
+    private def lambdaBraceOwner(value: Tree): Option[Term.Block] = value.parent.collect {
+      case block: Term.Block if block.stats.lengthCompare(1) == 0 && (block.stats.head eq value) &&
+          argumentBlock(block) => block
     }
 
     private def bracedLambda(value: Tree): Boolean = value match {
       case function: Term.FunctionTerm =>
-        bracedArgument(function) || expression(function.body).isInstanceOf[Term.Block]
+        lambdaBraceOwner(function).nonEmpty ||
+          (argumentClause(function).isEmpty && expression(function.body).isInstanceOf[Term.Block])
       case function: Term.AnonymousFunction =>
-        bracedArgument(function) || expression(function.body).isInstanceOf[Term.Block]
-      case function: Term.PolyFunction => bracedArgument(function)
+        lambdaBraceOwner(function).nonEmpty ||
+          (argumentClause(function).isEmpty && expression(function.body).isInstanceOf[Term.Block])
+      case function: Term.PolyFunction => lambdaBraceOwner(function).nonEmpty
       case _ => false
     }
 
     @annotation.tailrec
     private def argumentClause(value: Tree): Option[Term.ArgClause] = value.parent match {
       case Some(arguments: Term.ArgClause) => Some(arguments)
-      case Some(block: Term.Block) if block.stats.lengthCompare(1) == 0 && (block.stats.head eq value) =>
-        argumentClause(block)
+      case Some(block: Term.Block) => argumentClause(block)
       case Some(assignment: Term.Assign) if assignment.rhs eq value => argumentClause(assignment)
       case Some(ascribed: Term.Ascribe) if ascribed.expr eq value => argumentClause(ascribed)
       case Some(annotated: Term.Annotate) if annotated.expr eq value => argumentClause(annotated)
+      case Some(function: Term.FunctionLike) if function.body eq value => argumentClause(function)
+      case Some(function: Term.AnonymousFunction) if function.body eq value => argumentClause(function)
       case _ => None
     }
 
     private def bracedCall(arguments: Term.ArgClause): Boolean =
-      arguments.mod.isEmpty && arguments.values.lengthCompare(1) == 0 && arguments.parent.exists {
-        case _: Term.Apply | _: Term.ApplyInfix => true
+      arguments.values match {
+        case (_: Term.Block | _: Term.PartialFunction) :: Nil =>
+          openingToken(arguments).exists(_.isInstanceOf[Token.LeftBrace | Token.Colon])
         case _ => false
       }
 
-    private def attachedArgument(value: Term): Boolean = expression(value) match {
-      case _: Term.FunctionTerm | _: Term.AnonymousFunction | _: Term.PolyFunction |
-          _: Term.PartialFunction => argumentClause(value).exists(bracedCall)
-      case _ => false
+    private def parenthesizedInfixArgument(arguments: Term.ArgClause, value: Term): Boolean =
+      arguments.begOffset < value.begOffset && openingToken(arguments).exists(_.isInstanceOf[Token.LeftParen])
+
+    private def renderArgumentBlock(block: Term.Block, indent: Int): Doc = block.stats match {
+      case (function: (Term.FunctionLike | Term.AnonymousFunction)) :: Nil => tree(function, indent)
+      case (_: Term) :: Nil =>
+        val before = hardLineCount
+        val beforeComments = commentIndex
+        val contents = statements(block, block.stats, indent + 2)
+        if (hardLineCount != before || commentIndex != beforeComments) braces(contents)
+        else contents.bracketBy(Doc.char('{'), Doc.char('}'))
+      case _ => braces(statements(block, block.stats, indent + 2))
     }
 
     private def packageNeedsBraces(pkg: Pkg): Boolean = {
@@ -835,27 +898,38 @@ private[csf] object Printer {
         parameters + Doc.text(arrow)
       }, braced) {
         if (braced) lambdaStatements(function, function.body, indent + 2)
-        else tree(function.body, indent + 2)
+        else lambdaBody(function, indent + 2)
       }
     }
 
     @annotation.tailrec
-    private def argumentContainer(value: Tree): Tree = value.parent match {
+    private def insideArgumentBraces(value: Tree): Boolean = value.parent match {
+      case Some(block: Term.Block) => argumentBlock(block)
+      case Some(function: Term.FunctionLike) if function.body eq value => insideArgumentBraces(function)
+      case _ => false
+    }
+
+    private def lambdaBody(function: Term.FunctionLike, indent: Int): Doc = function.body match {
+      case block: Term.Block if !argumentBlock(block) && insideArgumentBraces(function) =>
+        blockContents(block, indent)
+      case body => tree(body, indent, lineStart = true)
+    }
+
+    @annotation.tailrec
+    private def lambdaContainer(value: Tree): Tree = value.parent match {
       case Some(block: Term.Block) if block.stats.lengthCompare(1) == 0 && (block.stats.head eq value) =>
-        argumentContainer(block)
-      case Some(arguments: Term.ArgClause) if arguments.values.lengthCompare(1) > 0 => value
-      case Some(parent) if argumentClause(value).nonEmpty => parent
-      case Some(_) => value
-      case None => value
+        if (argumentBlock(block)) block else lambdaContainer(block)
+      case _ => value
     }
 
     private def lambdaStatements(function: Term, body: Term, indent: Int): Doc = {
       val values = body match {
-        case block: Term.Block if block.stats.isEmpty => Vector.empty
+        case block: Term.Block if block.stats.isEmpty && !argumentBlock(block) => Vector.empty
         case _ => Vector(body)
       }
-      statements(argumentContainer(function), values, indent, (value, depth) => function match {
-        case _: Term.PolyFunction => tree(value, depth, lineStart = true)
+      statements(lambdaContainer(function), values, indent, (value, depth) => value match {
+        case block: Term.Block if argumentBlock(block) => tree(block, depth, lineStart = true)
+        case _ if function.isInstanceOf[Term.PolyFunction] => tree(value, depth, lineStart = true)
         case _ => blockContents(value, depth)
       })
     }
@@ -870,15 +944,15 @@ private[csf] object Printer {
 
     private def caseContents(branch: Case, indent: Int): Doc = {
       val body = tree(branch.body, indent, lineStart = true)
-      val argument = branch.parent.exists {
-        case function: Term.PartialFunction => function.cases.lengthCompare(1) == 0 && bracedArgument(function)
-        case _ => false
+      val argument = branch.parent.collect {
+        case function: Term.PartialFunction if function.cases.lengthCompare(1) == 0 &&
+            argumentClause(function).nonEmpty => function
       }
       branch.origin match {
         case parsed: Origin.ParsedPartial if commentIndex < commentTokens.length =>
           parsed.allInputTokens().findNot(_.isInstanceOf[Token.Trivia], parsed.endTokenIdx, Int.MaxValue) match {
             case Some(boundary: (Token.KwCase | Token.RightBrace | Token.EOF)) =>
-              val endOffset = if (argument) argumentContainer(branch.parent.get).endOffset else boundary.start
+              val endOffset = argument.fold(boundary.start)(_.endOffset)
               var end = commentIndex
               while (end < commentTokens.length && commentTokens(end).end <= endOffset) end += 1
               if (end == commentIndex) body
@@ -1021,7 +1095,8 @@ private[csf] object Printer {
     }
 
     private def termSyntax(value: Tree, indent: Int): Doc = value match {
-      case block: Term.Block if (bracedArgument(block) || bracedLambda(expression(block))) &&
+      case block: Term.Block if argumentBlock(block) => renderArgumentBlock(block, indent)
+      case block: Term.Block if bracedLambda(expression(block)) &&
           expression(block).isInstanceOf[Term.AnonymousFunction | Term.FunctionTerm | Term.PolyFunction |
             Term.PartialFunction] => tree(expression(block), indent)
       case block: Term.Block if !(expression(block) eq block) => statements(block, block.stats, indent)
@@ -1080,18 +1155,17 @@ private[csf] object Printer {
         val braced = bracedLambda(lambda)
         arrowBody(tree(lambda.tparamClause, if (braced) indent + 2 else indent, lineStart = true) + arrowSuffix, braced) {
           if (braced) lambdaStatements(lambda, lambda.body, indent + 2)
-          else tree(lambda.body, indent + 2)
+          else lambdaBody(lambda, indent + 2)
         }
       }
-      case function: Term.PartialFunction if function.cases.lengthCompare(1) == 0 && bracedArgument(function) => {
+      case function: Term.PartialFunction if function.cases.lengthCompare(1) == 0 && argumentClause(function).nonEmpty => {
         val branch = function.cases.head
         if (firstCommentLine(branch.begOffset).nonEmpty || branch.body.isInstanceOf[Term.SubMatch]) {
-          braces(statements(argumentContainer(function), function.cases, indent + 2))
+          braces(statements(function, function.cases, indent + 2))
         } else caseArgument(branch, indent)
       }
       case function: Term.PartialFunction =>
-        braces(statements(if (bracedArgument(function)) argumentContainer(function) else function,
-          function.cases, indent + 2))
+        braces(statements(function, function.cases, indent + 2))
       case loop: Term.For => {
         val enumerators = tree(loop.enumsBlock, indent)
         val body = requiredBlock(loop.body, indent)
@@ -1425,15 +1499,14 @@ private[csf] object Printer {
         val mods = modifiers(definition.mods, indent)
         val patterns = definition.pats.iterator.map(spaced(_, indent)).toVector
         val tpe = definition.decltpe.map(value => Doc.char(':') + spaced(value, indent))
-        val rhs = assignmentBody(definition.rhs, indent)
-        mods + Doc.text("val") + Doc.intercalate(Doc.comma, patterns) +
-        tpe.getOrElse(Doc.empty) + rhs
+        val header = mods + Doc.text("val") + Doc.intercalate(Doc.comma, patterns) + tpe.getOrElse(Doc.empty)
+        header + assignmentBody(definition.rhs, indent, header = Some(header))
       }
       case definition: Defn.Def => {
         val mods = modifiers(definition.mods, indent)
         val signature = methodSignature(definition.name, definition.paramClauseGroups, definition.decltpe, indent)
-        val body = assignmentBody(definition.body, indent)
-        mods + Doc.text("def") + signature + body
+        val header = mods + Doc.text("def") + signature
+        header + assignmentBody(definition.body, indent, header = Some(header))
       }
       case group: Member.ParamClauseGroup => {
         val types = tree(group.tparamClause, indent)
@@ -1480,10 +1553,16 @@ private[csf] object Printer {
       }
       case arguments: Term.ArgClause =>
         arguments.values match {
-          case single :: Nil if bracedCall(arguments) && bracedArgument(single) => {
+          case single :: Nil if bracedCall(arguments) => {
               val body = tree(single, indent)
               val remaining = tokenComments(arguments, arguments.endOffset, indent)
-              (if (attachedArgument(single)) Doc.empty else Doc.space) + body +
+              val space = single match {
+                case block: Term.Block if block.stats.lengthCompare(1) == 0 &&
+                    block.stats.head.isInstanceOf[Term.FunctionLike | Term.AnonymousFunction] => Doc.empty
+                case _: Term.PartialFunction => Doc.empty
+                case _ => Doc.space
+              }
+              space + body +
               (if (remaining.isEmpty) Doc.empty else hardLine + remaining + hardLine)
             }
           case _ => {
@@ -1581,8 +1660,7 @@ private[csf] object Printer {
       case definition: Defn.GivenAlias => {
         val signature = givenSignature(definition.mods, definition.name, definition.paramClauseGroups,
           definition.decltpe, indent)
-        val body = assignmentBody(definition.body, indent)
-        signature + body
+        signature + assignmentBody(definition.body, indent, header = Some(signature))
       }
       case definition: Defn.ExtensionGroup => {
         val parameters = definition.paramClauseGroup.map(tree(_, indent))
@@ -1605,9 +1683,8 @@ private[csf] object Printer {
         val mods = modifiers(definition.mods, indent)
         val patterns = definition.pats.iterator.map(spaced(_, indent)).toVector
         val result = definition.decltpe.map(value => Doc.char(':') + spaced(value, indent))
-        val body = assignmentBody(definition.body, indent)
-        mods + Doc.text("var") + Doc.intercalate(Doc.comma, patterns) +
-        result.getOrElse(Doc.empty) + body
+        val header = mods + Doc.text("var") + Doc.intercalate(Doc.comma, patterns) + result.getOrElse(Doc.empty)
+        header + assignmentBody(definition.body, indent, header = Some(header))
       }
       case declaration: (Decl.Val | Decl.Var) => {
         val mods = modifiers(declaration.mods, indent)

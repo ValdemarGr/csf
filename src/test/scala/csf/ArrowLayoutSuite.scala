@@ -30,19 +30,19 @@ class ArrowLayoutSuite extends FunSuite {
     assertEquals(Formatter.format(result), Right(result))
   }
 
-  test("short lambda bodies remain after the arrow inside attached argument braces") {
+  test("short lambda bodies remain after the arrow inside argument parentheses") {
     check("val f=x=>f(x)", "val f = x => f(x)\n")
-    check("val result=run(x=>f(x))", "val result = run{ x => f(x) }\n")
+    check("val result=run(x=>f(x))", "val result = run(x => f(x))\n")
   }
 
   test("short context lambda bodies remain after the context arrow") {
     check("val f=(ctx:Context)?=>use(ctx)", "val f = (ctx: Context) ?=> use(ctx)\n")
-    check("val result=run((ctx:Context)?=>use(ctx))", "val result = run{ (ctx: Context) ?=> use(ctx) }\n")
+    check("val result=run((ctx:Context)?=>use(ctx))", "val result = run((ctx: Context) ?=> use(ctx))\n")
   }
 
   test("short polymorphic lambda bodies remain after their arrows") {
     check("val f=[A]=>(x:A)=>x", "val f = [A] => (x: A) => x\n")
-    check("val result=run([A]=>(x:A)=>x)", "val result = run{ [A] => (x: A) => x }\n")
+    check("val result=run([A]=>(x:A)=>x)", "val result = run([A] => (x: A) => x)\n")
   }
 
   test("lambda and case bodies fitting exactly 100 columns remain inline") {
@@ -71,7 +71,7 @@ class ArrowLayoutSuite extends FunSuite {
   test("multiline chains move below normal and context lambda arrows") {
     val receiver = "receiver" + "x" * 86
     check(s"val result=run(x=>$receiver.foo.bar)",
-      s"val result =\n  run{ x =>\n    $receiver\n      .foo\n      .bar\n  }\n")
+      s"val result = run(\n  x =>\n    $receiver\n      .foo\n      .bar\n)\n")
     check(s"val f=(ctx:Context)?=>$receiver.first.second",
       s"val f =\n  (ctx: Context) ?=>\n    $receiver\n      .first\n      .second\n")
   }
@@ -86,9 +86,9 @@ class ArrowLayoutSuite extends FunSuite {
       s"val descriptive =\n  value => combine($first, $second)\n")
   }
 
-  test("multistatement lambda bodies use one outer lambda brace pair") {
+  test("multistatement lambda bodies keep braces after the arrow") {
     check("val result=run(x=>{prepare(x);value(x)})",
-      "val result =\n  run{ x =>\n    prepare(x)\n    value(x)\n  }\n")
+      "val result = run(\n  x =>\n    {\n      prepare(x)\n      value(x)\n    }\n)\n")
   }
 
   test("match cases and partial functions choose body layout independently per case") {
@@ -100,13 +100,13 @@ class ArrowLayoutSuite extends FunSuite {
   }
 
   test("body comments always occupy standalone lines") {
-    check("val result=run(x=> /* note */ f(x))", "val result =\n  run{ x =>\n    /* note */\n    f(x)\n  }\n")
-    check("val result=run(x=> // note\nf(x))", "val result =\n  run{ x =>\n    // note\n    f(x)\n  }\n")
+    check("val result=run(x=> /* note */ f(x))", "val result = run(\n  x =>\n    /* note */\n    f(x)\n)\n")
+    check("val result=run(x=> // note\nf(x))", "val result = run(\n  x =>\n    // note\n    f(x)\n)\n")
   }
 
   test("empty lambdas preserve empty parameters bodies and comment-only closing braces") {
-    check("val result=run(()=>())", "val result = run{ () => () }\n")
-    check("val result=run(x=>{})", "val result = run{ x => }\n")
-    check("val result=run(x=>{ // note\n})", "val result =\n  run{ x =>\n    // note\n  }\n")
+    check("val result=run(()=>())", "val result = run(() => ())\n")
+    check("val result=run(x=>{})", "val result = run(x => {})\n")
+    check("val result=run(x=>{ // note\n})", "val result = run(\n  x =>\n    {\n      // note\n    }\n)\n")
   }
 }

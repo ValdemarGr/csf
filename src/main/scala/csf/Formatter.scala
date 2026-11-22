@@ -29,7 +29,7 @@ object Formatter {
     Either.catchNonFatal(Parse.parseSource(Input.String(source)))
       .leftMap(error => FormatError.Parse(error.toString)).flatMap {
       case Parsed.Success(tree) =>
-        Printer.print(tree, options.controlSyntax).map { doc =>
+        Printer.print(tree, options).map { doc =>
           val rendered = doc.render(options.columns)
           if (rendered.isEmpty) "" else rendered.replaceAll("\n+$", "") + "\n"
         }

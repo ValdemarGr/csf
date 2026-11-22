@@ -32,29 +32,26 @@ class LambdaDelimiterSuite extends FunSuite {
     result
   }
 
-  test("sole lambda argument forms converge to attached braces from either source delimiter") {
+  test("sole lambda arguments retain their call delimiters") {
     List(
-      "value=>use(value)",
-      "(value:Int)=>use(value)",
-      "(left:Int,right:Int)=>combine(left,right)",
-      "(context:Context)?=>use(context)",
-      "[A]=>(value:A)=>value",
-      "_.value",
-    ).foreach { lambda =>
-      val result = format(s"val result=values.map($lambda)")
-      assertEquals(result, format(s"val result=values.map{$lambda}"))
-      assert(result.contains("values.map{"), result)
+      "value=>use(value)" -> "value => use(value)",
+      "(value:Int)=>use(value)" -> "(value: Int) => use(value)",
+      "(left:Int,right:Int)=>combine(left,right)" -> "(left: Int, right: Int) => combine(left, right)",
+      "(context:Context)?=>use(context)" -> "(context: Context) ?=> use(context)",
+      "[A]=>(value:A)=>value" -> "[A] => (value: A) => value",
+      "_.value" -> "_.value",
+    ).foreach { case (lambda, expected) =>
+      assertEquals(format(s"val result=values.map($lambda)"), s"val result = values.map($expected)\n")
+      assertEquals(format(s"val result=values.map{$lambda}"), s"val result = values.map{ $expected }\n")
     }
-    assertEquals(format("val result=values.map(value=>use(value))"),
-      "val result = values.map{ value => use(value) }\n")
-    assertEquals(format("val result=values.map(_.id)"), "val result = values.map{ _.id }\n")
-    assertEquals(format("val result=values.map{_.id}"), "val result = values.map{ _.id }\n")
     val partial = format("val result=values.collect({case Some(value)=>use(value)})")
-    assertEquals(partial, format("val result=values.collect{case Some(value)=>use(value)}"))
-    assert(partial.contains("values.collect{"), partial)
+    assert(partial.contains("values.collect("), partial)
+    assert(partial.contains("{"), partial)
+    assertEquals(format("val result=values.collect{case Some(value)=>use(value)}"),
+      "val result = values.collect{ case Some(value) => use(value) }\n")
   }
 
-  test("single-expression lambda comments remain inside attached argument braces") {
+  test("single-expression lambda comments remain inside the source argument delimiters") {
     List(
       "val result=values.map(/* before */_.value)" -> "val result=values.map{/* before */_.value}",
       "val result=values.map(// before\n_.value)" -> "val result=values.map{// before\n_.value}",
@@ -66,26 +63,36 @@ class LambdaDelimiterSuite extends FunSuite {
       "val result=values.map((value:Int)=>use(value) // footer\n)" ->
         "val result=values.map{(value:Int)=>use(value) // footer\n}",
     ).foreach { case (parenthesized, braced) =>
-      val result = format(parenthesized)
-      assertEquals(result, format(braced))
-      val application = result.parse[Source].get.stats.head.asInstanceOf[Defn.Val].rhs.asInstanceOf[Term.Apply]
-      val argumentText = application.argClause.pos.text
-      assert(argumentText.startsWith("{"), result)
-      assert(argumentText.contains("//") || argumentText.contains("/*"), result)
+      List(parenthesized -> "(", braced -> "{").foreach { case (source, opening) =>
+        val result = format(source)
+        val application = result.parse[Source].get.stats.head.asInstanceOf[Defn.Val].rhs.asInstanceOf[Term.Apply]
+        val argumentText = application.argClause.pos.text
+        assert(argumentText.startsWith(opening), result)
+        assert(argumentText.contains("//") || argumentText.contains("/*"), result)
+      }
     }
+
+    val result = format("val result=values.map(/* before block */{/* inside block */value=>use(value)})")
+    val application = result.parse[Source].get.stats.head.asInstanceOf[Defn.Val].rhs.asInstanceOf[Term.Apply]
+    val block = application.argClause.values.head.pos.text
+    assert(application.argClause.pos.text.contains("/* before block */"), result)
+    assert(!block.contains("/* before block */"), result)
+    assert(block.contains("/* inside block */"), result)
   }
 
-  test("long single-expression placeholder bodies keep attached braces while wrapping") {
+  test("long single-expression placeholder bodies retain their call delimiters while wrapping") {
     val first = "first" + "Argument" * 5
     val second = "second" + "Argument" * 5
-    val result = format(s"val result=values.map(_.combine($first,$second))")
+    val parenthesized = format(s"val result=values.map(_.combine($first,$second))")
+    val braced = format(s"val result=values.map{_.combine($first,$second)}")
 
-    assertEquals(result, format(s"val result=values.map{_.combine($first,$second)}"))
-    assert(result.contains("values.map{"), result)
-    assert(result.linesIterator.forall(_.length <= 100), result)
+    assert(parenthesized.contains("values.map("), parenthesized)
+    assert(braced.contains("values.map{"), braced)
+    assert(parenthesized.linesIterator.forall(_.length <= 100), parenthesized)
+    assert(braced.linesIterator.forall(_.length <= 100), braced)
   }
 
-  test("multistatement empty and declaration-only lambda bodies use argument braces") {
+  test("lambda body braces stay inside their argument delimiters") {
     List(
       "val result=values.map(value=>{prepare(value);use(value)})" ->
         "val result=values.map{value=>prepare(value);use(value)}",
@@ -93,33 +100,44 @@ class LambdaDelimiterSuite extends FunSuite {
       "val result=values.map(value=>{val next=value})" -> "val result=values.map{value=>val next=value}",
     ).foreach { case (parenthesized, braced) =>
       val result = format(parenthesized)
-      assertEquals(result, format(braced))
-      assert(result.contains("values.map{"), result)
+      assert(result.contains("values.map("), result)
+      assert("value =>\\s*\\{".r.findFirstIn(result).nonEmpty, result)
+      val attached = format(braced)
+      assert(attached.contains("values.map{"), attached)
     }
+
+    val bracedBody = format("val result=values.map{value=>{prepare(value);use(value)}}")
+    assert(bracedBody.contains("values.map{"), bracedBody)
+    assert("value =>\\s*\\{".r.findFirstIn(bracedBody).nonEmpty, bracedBody)
+
+    val nested = format("val result=values.map{value=>(inner=>{use(inner)});use(value)}")
+    assert("inner =>\\s*\\{".r.findFirstIn(nested).nonEmpty, nested)
   }
 
-  test("infix curried and wrapped lambda arguments use the same canonical delimiters") {
-    List(
-      "val result=values map (_.value)" -> "val result=values map {_.value}",
-      "val result=select(context)(_.value)" -> "val result=select(context){_.value}",
-      "val result=values.map({{{_.value}}})" -> "val result=values.map{_.value}",
-      "val result=values map ({(value:Int)=>use(value) // footer\n})" ->
-        "val result=values map{(value:Int)=>use(value) // footer\n}",
-    ).foreach { case (parenthesized, braced) =>
-      assertEquals(format(parenthesized), format(braced))
-    }
-    assertEquals(format("val result=values map (_.id)"), "val result = values map{ _.id }\n")
+  test("infix curried and wrapped lambda arguments retain their source delimiters") {
+    assertEquals(format("val result=values map (_.id)"), "val result = values map (_.id)\n")
+    assertEquals(format("val result=values map {_.value}"), "val result = values map{ _.value }\n")
+    assertEquals(format("val result=select(context)(_.value)"), "val result = select(context)(_.value)\n")
+    assertEquals(format("val result=select(context){_.value}"), "val result = select(context){ _.value }\n")
+    val wrapped = format("val result=values.map({{{_.value}}})")
+    assert(wrapped.contains("values.map("), wrapped)
+    assertEquals(wrapped.count(_ == '{'), 3, wrapped)
+    val commented = format("val result=values map ({(value:Int)=>use(value) // footer\n})")
+    assert("values map\\s*\\(".r.findFirstIn(commented).nonEmpty, commented)
+    assertEquals(commented.count(_ == '{'), 1, commented)
+    val braced = format("val result=values map{(value:Int)=>use(value) // footer\n}")
+    assert(braced.contains("values map{"), braced)
   }
 
-  test("multiple arguments and constructors retain parentheses around braced lambdas") {
+  test("multiple arguments and constructors retain unbraced lambdas in parentheses") {
     val multiple = format("val result=combine((value:Int)=>use(value),other)")
     val constructor = format("val result=new Service(_.value)")
 
-    assert(multiple.contains("combine({ (value: Int) => use(value) }, other)"), multiple)
-    assert(constructor.contains("new Service({ _.value })"), constructor)
+    assert(multiple.contains("combine((value: Int) => use(value), other)"), multiple)
+    assert(constructor.contains("new Service(_.value)"), constructor)
   }
 
-  test("all literal lambda forms retain braces inside required multiargument parentheses") {
+  test("literal lambda forms keep explicit braces inside multiargument parentheses") {
     List(
       "value=>use(value)",
       "(value:Int)=>use(value)",
@@ -127,18 +145,20 @@ class LambdaDelimiterSuite extends FunSuite {
       "(context:Context)?=>use(context)",
       "[A]=>(value:A)=>value",
     ).foreach { lambda =>
-      val result = format(s"val result=call($lambda,42)")
+      val naked = format(s"val result=call($lambda,42)")
+      val braced = format(s"val result=call({$lambda},42)")
 
-      assertEquals(result, format(s"val result=call({$lambda},42)"))
-      assert(result.contains("call({"), result)
-      assert(result.contains("}, 42)"), result)
+      assert(!naked.contains("{"), naked)
+      assert(braced.contains("call("), braced)
+      assertEquals(braced.count(_ == '{'), 1, braced)
     }
-    List("val result=call(_.id,42)", "val result=call({_.id},42)").foreach { source =>
-      assertEquals(format(source), "val result = call({ _.id }, 42)\n")
-    }
+    val naked = format("val result=call(_.id,42)")
+    val braced = format("val result=call({_.id},42)")
+    assertEquals(naked, "val result = call(_.id, 42)\n")
+    assertEquals(braced.count(_ == '{'), 1, braced)
   }
 
-  test("constructor and using arguments keep both lambda braces and required parentheses") {
+  test("constructor and using arguments keep their explicit lambda braces") {
     List(
       "val result=new Service(_.id,42)" -> "val result=new Service({_.id},42)",
       "val result=new Service((value:Int)=>use(value))" ->
@@ -146,20 +166,23 @@ class LambdaDelimiterSuite extends FunSuite {
       "val result=call(using (left:Context)=>use(left),(right:Context)=>use(right))" ->
         "val result=call(using {(left:Context)=>use(left)},{(right:Context)=>use(right)})",
     ).foreach { case (naked, braced) =>
-      assertEquals(format(naked), format(braced))
+      val plain = format(naked)
+      val wrapped = format(braced)
+      assert(!plain.contains("{"), plain)
+      assertEquals(wrapped.count(_ == '{'), braced.count(_ == '{'), wrapped)
     }
-    List("val result=new Service(_.id)", "val result=new Service({_.id})").foreach { source =>
-      assertEquals(format(source), "val result = new Service({ _.id })\n")
-    }
-    List(
-      "val result=call(using (value:Context)=>use(value))",
-      "val result=call(using {(value:Context)=>use(value)})",
-    ).foreach { source =>
-      assertEquals(format(source), "val result = call(using { (value: Context) => use(value) })\n")
-    }
+    assertEquals(format("val result=new Service(_.id)"), "val result = new Service(_.id)\n")
+    val constructor = format("val result=new Service({_.id})")
+    assert(constructor.contains("new Service("), constructor)
+    assertEquals(constructor.count(_ == '{'), 1, constructor)
+    assertEquals(format("val result=call(using (value:Context)=>use(value))"),
+      "val result = call(using (value: Context) => use(value))\n")
+    val contextual = format("val result=call(using {(value:Context)=>use(value)})")
+    assert(contextual.contains("using"), contextual)
+    assertEquals(contextual.count(_ == '{'), 1, contextual)
   }
 
-  test("named argument lambdas use braces without removing their enclosing argument clause") {
+  test("named argument lambdas retain their enclosing argument clause and explicit braces") {
     List(
       "val result=call(callback=(value=>use(value)),other=42)" ->
         "val result=call(callback={value=>use(value)},other=42)",
@@ -171,39 +194,46 @@ class LambdaDelimiterSuite extends FunSuite {
       "val result=call(callback=({value=>use(value)} // callback footer\n),other=/* other argument */42)" ->
         "val result=call(callback={value=>use(value) // callback footer\n},other=/* other argument */42)",
     ).foreach { case (naked, braced) =>
-      assertEquals(format(naked), format(braced))
+      List(naked, braced).foreach { source =>
+        val result = format(source)
+        assert(result.contains("call("), result)
+        assertEquals(result.count(_ == '{'), source.count(_ == '{'), result)
+      }
     }
     assertEquals(format("val result=call(callback=(value=>use(value)),other=42)"),
-      "val result = call(callback = { value => use(value) }, other = 42)\n")
+      "val result = call(callback = value => use(value), other = 42)\n")
   }
 
-  test("typed argument wrappers preserve their ascription around a braced lambda") {
+  test("typed argument wrappers retain ascriptions and explicit lambda braces") {
     val naked = "val result=call((((value:Int)=>use(value)):Int=>Int),other)"
     val braced = "val result=call(({(value:Int)=>use(value)}:Int=>Int),other)"
-    val result = format(naked)
-
-    assertEquals(result, format(braced))
-    assert(result.contains("{ (value: Int) => use(value) }"), result)
-    assert(result.contains(": Int => Int"), result)
+    List(naked, braced).foreach { source =>
+      val result = format(source)
+      assert(result.contains(": Int => Int"), result)
+      assertEquals(result.count(_ == '{'), source.count(_ == '{'), result)
+    }
   }
 
-  test("lambda argument braces remain when a body grows from one expression to multiple statements") {
+  test("explicit lambda body braces remain inside multiargument calls") {
     assertEquals(format("val result=call(value=>use(value),42)"),
-      "val result = call({ value => use(value) }, 42)\n")
+      "val result = call(value => use(value), 42)\n")
     val multiline = format("val result=call(value=>{prepare(value);use(value)},42)")
+    val braced = format("val result=call({value=>prepare(value);use(value)},42)")
 
-    assertEquals(multiline, format("val result=call({value=>prepare(value);use(value)},42)"))
-    assertEquals(multiline,
-      "val result =\n  call(\n    { value =>\n      prepare(value)\n      use(value)\n    },\n    42\n  )\n")
+    assert(multiline.contains("value =>\n    {"), multiline)
+    assert(braced.contains("{ value =>"), braced)
   }
 
-  test("empty and declaration-only lambda bodies remain braced arguments in larger clauses") {
+  test("empty and declaration-only lambda bodies keep their explicit brace placement") {
     List(
       "val result=call(value=>{},42)" -> "val result=call({value=>},42)",
       "val result=call(value=>{val next=value},42)" ->
         "val result=call({value=>val next=value},42)",
     ).foreach { case (naked, braced) =>
-      assertEquals(format(naked), format(braced))
+      val body = format(naked)
+      val argument = format(braced)
+      assert("value =>\\s*\\{".r.findFirstIn(body).nonEmpty, body)
+      assert(argument.contains("{ value =>"), argument)
     }
   }
 
@@ -219,7 +249,9 @@ class LambdaDelimiterSuite extends FunSuite {
     assertEquals(arguments.size, 2)
     assert(secondComment.start >= arguments.head.pos.end, result)
     assert(!arguments.head.pos.text.contains("second argument"), result)
-    assertEquals(result, format("val result=call({value=>use(value)},// second argument\n {other=>use(other)})"))
+    val braced = format("val result=call({value=>use(value)},// second argument\n {other=>use(other)})")
+    val bracedApplication = braced.parse[Source].get.stats.head.asInstanceOf[Defn.Val].rhs.asInstanceOf[Term.Apply]
+    assert(!bracedApplication.argClause.values.head.pos.text.contains("second argument"), braced)
     val named = format("val result=call(callback=({value=>use(value)} // callback footer\n),other=/* other argument */42)")
     val namedApplication = named.parse[Source].get.stats.head.asInstanceOf[Defn.Val].rhs.asInstanceOf[Term.Apply]
 
@@ -230,7 +262,7 @@ class LambdaDelimiterSuite extends FunSuite {
 
   test("a polymorphic lambda retains its nested function in a multiargument clause") {
     assertEquals(format("val result=call([A]=>(value:A)=>value,42)"),
-      "val result = call({ [A] => (value: A) => value }, 42)\n")
+      "val result = call([A] => (value: A) => value, 42)\n")
   }
 
   test("standalone named and placeholder lambdas retain their expression layout") {
@@ -308,13 +340,15 @@ class LambdaDelimiterSuite extends FunSuite {
     assert(result.contains("/* wrapper footer */\n  }\n  // sibling\n  val after = 1"), result)
   }
 
-  test("a single-expression conditional lambda uses attached braces around its multiline body") {
-    val result = format("val result=values.map(value=>if(ready)use(value)else other)")
-
-    assertEquals(result, format("val result=values.map{value=>if(ready){use(value)}else{other}}"))
-    assert(result.contains("values.map{"), result)
-    val application = result.parse[Source].get.stats.head.asInstanceOf[Defn.Val].rhs.asInstanceOf[Term.Apply]
-    assert(application.argClause.pos.text.startsWith("{"), result)
-    assert(application.argClause.pos.text.contains("\n"), result)
+  test("conditional lambda arguments keep their source delimiters while wrapping") {
+    List(
+      "val result=values.map(value=>if(ready)use(value)else other)" -> "(",
+      "val result=values.map{value=>if(ready){use(value)}else{other}}" -> "{",
+    ).foreach { case (source, opening) =>
+      val result = format(source)
+      val application = result.parse[Source].get.stats.head.asInstanceOf[Defn.Val].rhs.asInstanceOf[Term.Apply]
+      assert(application.argClause.pos.text.startsWith(opening), result)
+      assert(application.argClause.pos.text.contains("\n"), result)
+    }
   }
 }

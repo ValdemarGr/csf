@@ -167,6 +167,29 @@ class NewlineSuite extends FunSuite {
       "object Example {\n  call();\n\n  // Next expression\n  -value\n}\n")
   }
 
+  test("a unit result after a unit-valued binding needs no separator") {
+    val expected = """val d =
+      |  env
+      |    .context
+      |    .commands
+      |    .addHandler[Unit](
+      |      for {
+      |        _ <- Setup.unit
+      |      } yield { (req, res) =>
+      |        val _ = ()
+      |        ()
+      |      }
+      |    )
+      |""".stripMargin
+
+    check(expected, expected)
+    check(expected.replace("val _ = ()\n        ()", "val _ = { () }; { () }"), expected)
+  }
+
+  test("a standalone unit expression keeps its separator after a postfix expression") {
+    check("def run = { f postfix; () }", "def run = {\n  f postfix;\n  ()\n}\n")
+  }
+
   test("standalone comments retain bounded grouping before the attached statement") {
     check("val first=1\n\n// explanation\n\n\nval second=2",
       "val first = 1\n\n// explanation\nval second = 2\n")

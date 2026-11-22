@@ -39,11 +39,12 @@ class NormalizationSuite extends FunSuite {
     }
   }
 
-  test("singleton lambda bodies converge while argument lambda delimiters stay required") {
+  test("singleton lambda body blocks keep their braces inside calls") {
     val blocked = "val result=values.map(value=>{{{use(value)}}})"
     val direct = "val result=values.map(value=>use(value))"
 
-    assertEquals(format(blocked), format(direct))
+    assertEquals(format(blocked).count(_ == '{'), 3)
+    assertEquals(format(direct), "val result = values.map(value => use(value))\n")
   }
 
   test("yield and case bodies normalize nested singleton expression blocks") {
@@ -59,12 +60,18 @@ class NormalizationSuite extends FunSuite {
     }
   }
 
-  test("call arguments normalize independently without changing their arity") {
-    assertEquals(format("val result=combine({{{first}}},{{second}})"),
-      format("val result=combine(first,second)"))
-    assertEquals(format("val result=call({(first,second)})"),
-      format("val result=call((first,second))"))
-    assertEquals(format("val result=call({()})"), format("val result=call(())"))
+  test("braced call arguments retain their blocks and arity") {
+    List(
+      "val result=combine({{{first}}},{{second}})",
+      "val result=call(value={{{next}}})",
+      "val result=call({(first,second)})",
+      "val result=call({()})",
+      "val result=left - {{right-last}}",
+      "val result=left op {(first,second)}",
+      "val result=left op {()}",
+    ).foreach { source =>
+      assertEquals(format(source).count(_ == '{'), source.count(_ == '{'))
+    }
   }
 
   test("singleton qualifier blocks and chained receivers share their direct expression layout") {
@@ -89,12 +96,9 @@ class NormalizationSuite extends FunSuite {
   test("removing expression braces preserves precedence associativity and signed receivers") {
     List(
       "val result=({{left+right}})*value" -> "val result=(left+right)*value",
-      "val result=left - {{right-last}}" -> "val result=left-(right-last)",
       "val result={{head::tail}}::rest" -> "val result=(head::tail)::rest",
       "val result=({{-1}}).abs" -> "val result=(-1).abs",
       "val result=({{-0.0}}).toString" -> "val result=(-0.0).toString",
-      "val result=left op {(first,second)}" -> "val result=left op ((first,second))",
-      "val result=left op {()}" -> "val result=left op (())",
     ).foreach { case (blocked, grouped) =>
       assertEquals(format(blocked), format(grouped))
     }

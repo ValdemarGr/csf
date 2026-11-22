@@ -70,11 +70,11 @@ class PartialFunctionLayoutSuite extends FunSuite {
       "val result =\n  values.map{\n    // before case\n    case x => f(x)\n  }\n")
   }
 
-  test("footer line comments remain inside the single-case argument braces") {
+  test("footer line comments remain inside their original argument delimiters") {
     check("val result=values.map{case x=>f(x) // footer\n}",
       "val result =\n  values.map{ case x =>\n    f(x)\n    // footer\n  }\n")
     check("val result=values.collect({/* leading */case x=>f(x)} // footer\n)",
-      "val result =\n  values.collect{\n    /* leading */\n    case x =>\n      f(x)\n      // footer\n  }\n")
+      "val result =\n  values.collect(\n    {\n      /* leading */\n      case x => f(x)\n    }\n    // footer\n  )\n")
   }
 
   test("explicit multistatement case bodies omit their outer braces") {

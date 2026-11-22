@@ -52,6 +52,18 @@ class ValBodyLayoutSuite extends FunSuite {
     }
   }
 
+  test("call arguments wrap before the opening line moves below equals") {
+    val source = "val x = MyDatatype(first, second, third)"
+    val columns = "val x = MyDatatype(".length
+
+    assertEquals(format(source, columns),
+      "val x = MyDatatype(\n  first,\n  second,\n  third\n)\n")
+    assertEquals(format(source, columns - 1),
+      "val x =\n  MyDatatype(\n    first,\n    second,\n    third\n  )\n")
+    assertEquals(format("val x = /* call */ MyDatatype(first, second, third)"),
+      "val x =\n  /* call */\n  MyDatatype(first, second, third)\n")
+  }
+
   test("mandatory multiline conditional and match RHS expressions start below equals") {
     assertEquals(format("val result=if(ready)use(value)else fallback"),
       "val result =\n  if ready then {\n    use(value)\n  } else {\n    fallback\n  }\n")

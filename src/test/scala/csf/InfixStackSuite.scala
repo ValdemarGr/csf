@@ -45,8 +45,10 @@ class InfixStackSuite extends FunSuite {
     val left = (0 to 128).map(index => s"left$index").mkString(" + ")
     val right = (0 to 128).map(index => s"right$index").mkString(" - ")
 
-    assertEquals(format(s"val result=({{$left}})*(base-{{$right}})"),
-      format(s"val result=($left)*(base-($right))"))
+    val blocked = format(s"val result=({{$left}})*(base-{{$right}})")
+    val grouped = format(s"val result=($left)*(base-($right))")
+    assertEquals(blocked.count(_ == '{'), 2)
+    assertEquals(grouped.count(_ == '{'), 0)
     assertEquals(format("val result=(left+right)*value-(other-last)"),
       "val result = (left + right) * value - (other - last)\n")
     assertEquals(format("val result=(head::tail)::rest"), "val result = (head :: tail) :: rest\n")

@@ -113,7 +113,7 @@ class MethodSignatureLayoutSuite extends FunSuite {
       "object Queries {\n" +
         "  def getUniqueHxl[K: TypeId, A: Select: Unique[*, K]: TypeId](\n" +
         "    o: Org,\n    k: K\n" +
-        "  )(using Ses): Hxl[IO, A] = getUniqueHxlOpt[K, A](o, k).map{ _.get }\n" +
+        "  )(using Ses): Hxl[IO, A] = getUniqueHxlOpt[K, A](o, k).map(_.get)\n" +
         "}\n")
     assert(result.linesIterator.forall(_.length <= 100), result)
   }

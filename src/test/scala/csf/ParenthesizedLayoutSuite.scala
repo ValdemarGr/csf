@@ -43,23 +43,23 @@ class ParenthesizedLayoutSuite extends FunSuite {
     check(s"val result=call(\"$text\")", expected)
   }
 
-  test("a parenthesized call fitting after the assignment moves onto the next line") {
+  test("a parenthesized call one column over keeps its opener inline") {
     val text = "x" * (101 - "val result = call(\"\")".length)
 
-    check(s"val result=call(\"$text\")", s"val result =\n  call(\"$text\")\n")
+    check(s"val result=call(\"$text\")", s"val result = call(\n  \"$text\"\n)\n")
   }
 
-  test("a parenthesized call exceeding 100 columns after the assignment breaks both delimiters") {
+  test("a longer argument wraps under the inline call opener") {
     val text = "x" * (101 - "  call(\"\")".length)
 
     assertEquals(s"  call(\"$text\")".length, 101)
-    check(s"val result=call(\"$text\")", s"val result =\n  call(\n    \"$text\"\n  )\n")
+    check(s"val result=call(\"$text\")", s"val result = call(\n  \"$text\"\n)\n")
   }
 
   test("a multiline chain forces broken argument delimiters and one item per line") {
     val receiver = "receiver" + "x" * 86
     check(s"val result=combine($receiver.map(f).filter(p),other)",
-      s"val result =\n  combine(\n    $receiver\n      .map(f)\n      .filter(p),\n    other\n  )\n")
+      s"val result = combine(\n  $receiver\n    .map(f)\n    .filter(p),\n  other\n)\n")
   }
 
   test("long expression pattern and type tuples use one item per line") {
@@ -79,10 +79,10 @@ class ParenthesizedLayoutSuite extends FunSuite {
       s"def combine(\n  firstArgument: $tpe,\n  secondArgument: $tpe\n) = firstArgument\n")
   }
 
-  test("long lambda parameter clauses break inside attached argument braces") {
+  test("long lambda parameter clauses break inside argument parentheses") {
     val tpe = "VeryLongParameterTypeForThisExample"
     check(s"val result=combine((firstArgument:$tpe,secondArgument:$tpe)=>firstArgument)",
-      s"val result =\n  combine{ (\n      firstArgument: $tpe,\n      secondArgument: $tpe\n    ) => firstArgument\n  }\n")
+      s"val result = combine(\n  (\n    firstArgument: $tpe,\n    secondArgument: $tpe\n  ) => firstArgument\n)\n")
   }
 
   test("a required grouped multiline expression breaks its parentheses") {
@@ -97,6 +97,6 @@ class ParenthesizedLayoutSuite extends FunSuite {
 
   test("a multiline block argument keeps both required braces and broken outer parentheses") {
     check("val result=combine({prepare();value},other)",
-      "val result =\n  combine(\n    {\n      prepare()\n      value\n    },\n    other\n  )\n")
+      "val result = combine(\n  {\n    prepare()\n    value\n  },\n  other\n)\n")
   }
 }

@@ -95,6 +95,6 @@ class InfixChainLayoutSuite extends FunSuite {
     assertEquals(format("val codec=first *: // next operand\n second *: last"),
       "val codec =\n  first *:\n    // next operand\n    second *:\n    last\n")
     assertEquals(format("val codec=first *: build({prepare();value}) *: last"),
-      "val codec =\n  first *:\n    build {\n      prepare()\n      value\n    } *:\n    last\n")
+      "val codec =\n  first *:\n    build(\n      {\n        prepare()\n        value\n      }\n    ) *:\n    last\n")
   }
 }

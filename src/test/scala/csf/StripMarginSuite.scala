@@ -63,7 +63,7 @@ class StripMarginSuite extends FunSuite {
     assert(result.contains("    \"\"\"|first\n       |second\"\"\""), result)
     val argument = format("val text = consume(\"\"\"|first\n |second\"\"\".stripMargin)")
     assertEquals(argument,
-      "val text =\n  consume(\n    \"\"\"|first\n       |second\"\"\".stripMargin\n  )\n")
+      "val text = consume(\n  \"\"\"|first\n     |second\"\"\".stripMargin\n)\n")
   }
 
   test("interpolation expression lines do not gain margin characters") {
