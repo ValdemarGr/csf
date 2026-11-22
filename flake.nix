@@ -14,27 +14,65 @@
     pkgs = nixpkgs.legacyPackages.${system};
     jdk = nixpkgs-jdk.legacyPackages.${system}.temurin-bin-27;
     graalvm = pkgs.graalvmPackages.graalvm-ce-musl;
+    sbt = pkgs.sbt.override { jre = jdk; };
+    sbtRepositories = pkgs.writeText "csf-sbt-repositories" ''
+      [repositories]
+      maven-central: https://repo.maven.apache.org/maven2/
+    '';
+    sbtEnvironment = ''
+      export HOME="$TMPDIR/home"
+      export COURSIER_CACHE="$HOME/coursier"
+      mkdir -p "$HOME"
+      sbtArgs=(--server -batch "-Duser.home=$HOME" -Dsbt.override.build.repos=true
+        "-Dsbt.repository.config=${sbtRepositories}" -Dsbt.supershell=false)
+    '';
+    sbtDeps = pkgs.stdenvNoCC.mkDerivation {
+      name = "csf-sbt-deps";
+      src = ./.;
+      nativeBuildInputs = [ sbt ];
+      outputHashMode = "recursive";
+      # Refresh this hash when sbt or Maven dependencies change.
+      outputHash = "sha256-n8W97UEKwn1i3QICyZzSHtXavgiq9tIeSjGwiz16q8k=";
+      dontFixup = true;
+
+      buildPhase = ''
+        ${sbtEnvironment}
+        sbt "''${sbtArgs[@]}" 'Compile / packageBin'
+      '';
+      installPhase = ''
+        mkdir -p "$out"
+        cd "$HOME"
+        find .sbt/boot coursier -type f \( -name '*.jar' -o -name '*.pom' \) \
+          -exec cp --parents -t "$out" {} +
+      '';
+    };
   in
   {
     packages.${system} = rec {
-      csf = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
+      csf = pkgs.stdenv.mkDerivation {
         pname = "csf";
-        version = "0.3.0";
-        src = pkgs.fetchurl {
-          url = "https://github.com/ValdemarGr/csf/releases/download/v${finalAttrs.version}/csf-linux-x86_64-native.tar.gz";
-          hash = "sha256-xJfQvpYObY8VW+PWGErMjLwp+azIOQ/ByuV+j13nO3Y=";
-        };
+        version = self.shortRev or self.dirtyShortRev or "unstable";
+        src = ./.;
+        nativeBuildInputs = [ sbt graalvm ];
+        buildInputs = [ pkgs.zlib ];
+        JAVA_HOME = jdk.home;
+        GRAALVM_HOME = graalvm.home;
 
-        sourceRoot = ".";
-        dontBuild = true;
-        dontStrip = true;
+        buildPhase = ''
+          runHook preBuild
+          ${sbtEnvironment}
+          cp -r ${sbtDeps}/. "$HOME/"
+          chmod -R u+w "$HOME"
+          sbt "''${sbtArgs[@]}" nativeImage
+          runHook postBuild
+        '';
         installPhase = ''
           runHook preInstall
-          install -Dm755 csf "$out/bin/csf"
+          install -Dm755 target/native/csf "$out/bin/csf"
           runHook postInstall
         '';
         meta.mainProgram = "csf";
-      });
+      };
       default = csf;
     };
 
@@ -43,7 +81,7 @@
         buildInputs = [
           jdk
           graalvm
-          (pkgs.sbt.override { jre = jdk; })
+          sbt
           pkgs.stdenv.cc
           pkgs.zlib
           pkgs.gnutar
