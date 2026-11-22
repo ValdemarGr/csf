@@ -101,6 +101,25 @@ class ChainSuite extends FunSuite {
         "  } yield (request, result) => use(request, result)\n}\n")
   }
 
+  test("a braced collect statement splits its chain only when the case opener cannot fit") {
+    assertEquals(format("object Example{source.values.ready.collect{case Some(x)=>x}}"),
+      "object Example {\n  source.values.ready.collect{ case Some(x) => x }\n}\n")
+
+    val source = "object Example{source.values.ready.collect{case Some(x)=>{prepare(x);use(x)}}}"
+    val header = "  source.values.ready.collect{ case Some(x) =>"
+    assertEquals(format(source, columns = header.length),
+      s"object Example {\n$header\n    prepare(x)\n    use(x)\n  }\n}\n")
+    assertEquals(format(source, columns = header.length - 1),
+      "object Example {\n  source\n    .values\n    .ready\n    .collect{ case Some(x) =>\n" +
+        "      prepare(x)\n      use(x)\n    }\n}\n")
+  }
+
+  test("a yield lambda body keeps its terminal braced call opener together") {
+    assertEquals(format("val result=for{item<-values}yield x=>x.context.ships.foreach{ship=>prepare(ship);use(ship)}"),
+      "val result =\n  for {\n    item <- values\n  } yield x =>\n" +
+        "    x.context.ships.foreach{ ship =>\n      prepare(ship)\n      use(ship)\n    }\n")
+  }
+
   test("overflowing parameterless chains use one shared continuation indent") {
     val receiver = "r" * 86
     assertEquals(format(s"val result=$receiver.compile.drain"),

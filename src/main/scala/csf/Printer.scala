@@ -20,7 +20,19 @@ private[csf] object Printer {
 
   private enum BodyExprDoc {
     case Direct(doc: Doc)
-    case Prio(header: Doc, leading: Doc, callee: Doc, flat: Option[(Doc, Int)], dotIndent: Int, scope: Int => Doc)
+    case Prio(header: Doc, call: CallLayout)
+  }
+
+  private final case class CallLayout(leading: Doc, callee: Doc, flat: Option[(Doc, Int)], dotIndent: Int,
+      scope: Int => Doc) {
+    def fittingCallee(remaining: => Int): Option[Doc] = flat.collect {
+      case (doc, width) if width <= remaining => doc
+    }
+
+    def render(indent: Int, fitting: Option[Doc]): Doc = {
+      val offset = if (fitting.isDefined) 0 else dotIndent
+      leading + fitting.getOrElse(callee) + scope(indent + offset).nested(offset)
+    }
   }
 
   private enum InfixWork {
@@ -113,7 +125,7 @@ private[csf] object Printer {
               Direct(Doc.space + requiredBlock(term, indent, compactEmpty = false))
             case _: Term.PartialFunction => Direct(Doc.space + tree(term, indent))
             case call: Term.Apply =>
-              header.flatMap(prioritizedAssignment(term, call, _, indent)).getOrElse {
+              header.flatMap(declaration => prioritizedCall(term, call, indent + 2).map(Prio(declaration, _))).getOrElse {
                 Direct(arrowTail(2)(tree(term, indent + 2, lineStart = true)))
               }
             case _ => Direct(arrowTail(2)(tree(term, indent + 2, lineStart = true)))
@@ -125,24 +137,28 @@ private[csf] object Printer {
       }
       assignmentSeparator + (body match {
         case Direct(doc) => doc
-        case Prio(header, leading, callee, flat, dotIndent, scope) =>
-          val (receiver, rhsOffset, scopeOffset) = flat match {
-            case Some((doc, width)) =>
-              if (leading.isEmpty && assignmentHeaderWidth(header, indent) + 1 + width <= options.columns) {
-                (doc, 0, 0)
-              } else if (indent + 2 + width <= options.columns) (doc, 2, 0)
-              else (callee, 2, dotIndent)
-            case None => (callee, 2, dotIndent)
-          }
+        case Prio(header, call) =>
+          val inline = if (call.leading.isEmpty) {
+            call.fittingCallee(options.columns - assignmentHeaderWidth(header, indent) - 1)
+          } else None
+          val rhsOffset = if (inline.isDefined) 0 else 2
           val rhsIndent = indent + rhsOffset
-          val contents = receiver + scope(rhsIndent + scopeOffset).nested(scopeOffset)
+          val contents = call.render(rhsIndent, inline.orElse(call.fittingCallee(options.columns - rhsIndent)))
           val footer = tokenComments(value, value.endOffset, rhsIndent)
           val start = if (rhsOffset == 0) Doc.space else hardLine
-          (start + leading + contents + (if (footer.isEmpty) Doc.empty else hardLine + footer)).nested(rhsOffset)
+          (start + contents + (if (footer.isEmpty) Doc.empty else hardLine + footer)).nested(rhsOffset)
       })
     }
 
-    private def prioritizedAssignment(term: Term, call: Term.Apply, header: Doc, indent: Int): Option[BodyExprDoc] = {
+    private def expressionLine(value: Tree, indent: Int): Doc = value match {
+      case call: Term.Apply if bracedCall(call.argClause) =>
+        prioritizedCall(call, call, indent).fold(tree(value, indent, lineStart = true)) { layout =>
+          layout.render(indent, layout.fittingCallee(options.columns - indent))
+        }
+      case _ => tree(value, indent, lineStart = true)
+    }
+
+    private def prioritizedCall(term: Term, call: Term.Apply, indent: Int): Option[CallLayout] = {
       val arguments = call.argClause
       val braced = arguments.values.headOption.filter(_ => bracedCall(arguments)).filter {
         case block: Term.Block => block.stats.nonEmpty
@@ -153,11 +169,10 @@ private[csf] object Printer {
           Doc.char('('))
       }
       opener.map { scopeOpening =>
-        val rhsIndent = indent + 2
-        val leading = leadingComments(term, rhsIndent, lineStart = true)
+        val leading = leadingComments(term, indent, lineStart = true)
         val before = hardLineCount
-        val (callee, dotIndent) = chainParts(call.fun, rhsIndent)
-        val headerIndent = rhsIndent + dotIndent + 2
+        val (callee, dotIndent) = chainParts(call.fun, indent)
+        val headerIndent = indent + dotIndent + 2
         val beforeHeader = hardLineCount
         val arrow = braced.flatMap {
           case Term.Block(List(function: (Term.FunctionTerm | Term.PolyFunction))) if bracedLambda(function) =>
@@ -185,7 +200,7 @@ private[csf] object Printer {
           val preview = doc + arrow.fold(scopeOpening)(_._1.flatten)
           (doc, preview.maxWidth)
         }
-        BodyExprDoc.Prio(header, leading, callee, flat, dotIndent, scope)
+        CallLayout(leading, callee, flat, dotIndent, scope)
       }
     }
 
@@ -479,7 +494,7 @@ private[csf] object Printer {
         container: Tree,
         values: Iterable[Tree],
         indent: Int,
-        emit: (Tree, Int) => Doc = (value, depth) => tree(value, depth, lineStart = true),
+        emit: (Tree, Int) => Doc = expressionLine,
     ): Doc = {
       val docs = ArrayBuffer.empty[Doc]
       val iterator = values.iterator.buffered
@@ -596,7 +611,7 @@ private[csf] object Printer {
       case block: Term.Block if !(expression(block) eq block) =>
         statements(block, block.stats, indent, blockContents)
       case block: Term.Block => statements(block, block.stats, indent)
-      case _ => tree(value, indent, lineStart = true)
+      case _ => expressionLine(value, indent)
     }
 
     private def requiredBlock(value: Term, indent: Int, compactEmpty: Boolean = true): Doc =
@@ -996,7 +1011,7 @@ private[csf] object Printer {
     private def lambdaBody(function: Term.FunctionLike, indent: Int): Doc = function.body match {
       case block: Term.Block if !argumentBlock(block) && insideArgumentBraces(function) =>
         blockContents(block, indent)
-      case body => tree(body, indent, lineStart = true)
+      case body => expressionLine(body, indent)
     }
 
     @annotation.tailrec
@@ -1189,7 +1204,8 @@ private[csf] object Printer {
       case block: Term.Block if bracedLambda(expression(block)) &&
           expression(block).isInstanceOf[Term.AnonymousFunction | Term.FunctionTerm | Term.PolyFunction |
             Term.PartialFunction] => tree(expression(block), indent)
-      case block: Term.Block if !(expression(block) eq block) => statements(block, block.stats, indent)
+      case block: Term.Block if !(expression(block) eq block) =>
+        statements(block, block.stats, indent, (value, depth) => tree(value, depth, lineStart = true))
       case block: Term.Block if caseBodyBlock(block) => statements(block, block.stats, indent)
       case block: Term.Block => braces(statements(block, block.stats, indent + 2))
       case call: Term.Apply => chain(call, indent)
