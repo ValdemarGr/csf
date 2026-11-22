@@ -59,6 +59,21 @@ class ChainSuite extends FunSuite {
       s"val result =\n  $overflowingReceiver\n    .first()\n    .second()\n")
   }
 
+  test("a terminal braced lambda moves below equals before splitting the chain dots") {
+    val source = "val x=a.b.d.e.f{y=>work(y);y}"
+    val inline = "val x = a.b.d.e.f{ y =>\n  work(y)\n  y\n}\n"
+    val belowEquals = "val x =\n  a.b.d.e.f{ y =>\n    work(y)\n    y\n  }\n"
+    val dotted = "val x =\n  a\n    .b\n    .d\n    .e\n    .f{ y =>\n      work(y)\n      y\n    }\n"
+    val inlineWidth = inline.linesIterator.next().length
+    val belowEqualsWidth = belowEquals.linesIterator.drop(1).next().length
+
+    assertEquals(format(source, columns = inlineWidth), inline)
+    assertEquals(format(source, columns = belowEqualsWidth), belowEquals)
+    assertEquals(format(source, columns = belowEqualsWidth - 1), dotted)
+    assertEquals(format("val x=a.b[Int](z).d.e.f{y=>work(y);y}"),
+      "val x = a.b[Int](z).d.e.f{ y =>\n  work(y)\n  y\n}\n")
+  }
+
   test("overflowing parameterless chains use one shared continuation indent") {
     val receiver = "r" * 86
     assertEquals(format(s"val result=$receiver.compile.drain"),

@@ -16,6 +16,28 @@
     graalvm = pkgs.graalvmPackages.graalvm-ce-musl;
   in
   {
+    packages.${system} = rec {
+      csf = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
+        pname = "csf";
+        version = "0.3.0";
+        src = pkgs.fetchurl {
+          url = "https://github.com/ValdemarGr/csf/releases/download/v${finalAttrs.version}/csf-linux-x86_64-native.tar.gz";
+          hash = "sha256-xJfQvpYObY8VW+PWGErMjLwp+azIOQ/ByuV+j13nO3Y=";
+        };
+
+        sourceRoot = ".";
+        dontBuild = true;
+        dontStrip = true;
+        installPhase = ''
+          runHook preInstall
+          install -Dm755 csf "$out/bin/csf"
+          runHook postInstall
+        '';
+        meta.mainProgram = "csf";
+      });
+      default = csf;
+    };
+
     devShells.${system}.default = pkgs.mkShell {
         name = "env";
         buildInputs = [
