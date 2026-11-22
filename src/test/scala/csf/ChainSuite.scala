@@ -93,6 +93,12 @@ class ChainSuite extends FunSuite {
     assertEquals(format(source),
       "val input = TextInput.register(\n  env.context.commands,\n  env.context.queue,\n" +
         "  env.context.frees,\n  env.context.pending\n)\n")
+    assertEquals(format("val done = env.context.commands.addHandler[Result] { " +
+      "for { selectedShip <- GameplayPanels.selectedShip; states <- decl.read[State] } " +
+      "yield (request, result) => use(request, result) }"),
+      "val done = env.context.commands.addHandler[Result] {\n" +
+        "  for {\n    selectedShip <- GameplayPanels.selectedShip\n    states <- decl.read[State]\n" +
+        "  } yield (request, result) => use(request, result)\n}\n")
   }
 
   test("overflowing parameterless chains use one shared continuation indent") {

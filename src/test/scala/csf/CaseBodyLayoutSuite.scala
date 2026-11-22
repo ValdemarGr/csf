@@ -48,7 +48,7 @@ class CaseBodyLayoutSuite extends FunSuite {
 
   test("a tuple partial-function argument keeps its case header inline above its statements") {
     check("val result=rows.map{case(name,values)=>{val attribute=Attribute(name,values);attribute}}",
-      "val result =\n  rows.map{ case (name, values) =>\n    val attribute = Attribute(name, values)\n    attribute\n  }\n")
+      "val result = rows.map{ case (name, values) =>\n  val attribute = Attribute(name, values)\n  attribute\n}\n")
   }
 
   test("catch cases emit their statements directly without another pair of body braces") {

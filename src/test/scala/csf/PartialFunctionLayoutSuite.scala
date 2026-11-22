@@ -35,17 +35,17 @@ class PartialFunctionLayoutSuite extends FunSuite {
       "val result = values.map{ case Some(x) => f(x) }\n")
   }
 
-  test("a use case argument nests its body two spaces and aligns its closing brace with the method") {
+  test("a use case argument nests its body two spaces from the declaration when its header fits") {
     check("val result=resource.acquire.use{case(send,outbox)=>{prepare(send);outbox.persist(send)}}",
-      "val result =\n  resource\n    .acquire\n    .use{ case (send, outbox) =>\n" +
-        "      prepare(send)\n      outbox.persist(send)\n    }\n")
+      "val result = resource.acquire.use{ case (send, outbox) =>\n" +
+        "  prepare(send)\n  outbox.persist(send)\n}\n")
   }
 
   test("tuple case headers stay inline above multiline constructor bodies") {
     val attribute = "attribute" + "x" * 85
     check(s"val result=rows.map{case(name,values)=>Attribute($attribute,values.map(render).mkString(\",\"))}",
-      "val result =\n  rows.map{ case (name, values) =>\n" +
-        s"    Attribute(\n      $attribute,\n      values.map(render).mkString(\",\")\n    )\n  }\n")
+      "val result = rows.map{ case (name, values) =>\n" +
+        s"  Attribute(\n    $attribute,\n    values.map(render).mkString(\",\")\n  )\n}\n")
   }
 
   test("short guarded case headers remain on the call line") {
@@ -62,24 +62,24 @@ class PartialFunctionLayoutSuite extends FunSuite {
 
   test("block comments in a case body occupy standalone lines") {
     check("val result=values.map{case x=> /* body */ f(x)}",
-      "val result =\n  values.map{ case x =>\n    /* body */\n    f(x)\n  }\n")
+      "val result = values.map{ case x =>\n  /* body */\n  f(x)\n}\n")
   }
 
   test("comments before the case retain the ordinary block layout") {
     check("val result=values.map{ // before case\ncase x=>f(x)}",
-      "val result =\n  values.map{\n    // before case\n    case x => f(x)\n  }\n")
+      "val result = values.map{\n  // before case\n  case x => f(x)\n}\n")
   }
 
   test("footer line comments remain inside their original argument delimiters") {
     check("val result=values.map{case x=>f(x) // footer\n}",
-      "val result =\n  values.map{ case x =>\n    f(x)\n    // footer\n  }\n")
+      "val result = values.map{ case x =>\n  f(x)\n  // footer\n}\n")
     check("val result=values.collect({/* leading */case x=>f(x)} // footer\n)",
       "val result = values.collect(\n  {\n    /* leading */\n    case x => f(x)\n  }\n  // footer\n)\n")
   }
 
   test("explicit multistatement case bodies omit their outer braces") {
     check("val result=values.map{case x=>{prepare(x);f(x)}}",
-      "val result =\n  values.map{ case x =>\n    prepare(x)\n    f(x)\n  }\n")
+      "val result = values.map{ case x =>\n  prepare(x)\n  f(x)\n}\n")
   }
 
   test("nested and infix calls apply the same single-case argument layout") {
@@ -106,12 +106,12 @@ class PartialFunctionLayoutSuite extends FunSuite {
     check(s"val result=values.map{case Some($name)=>v}", expected)
   }
 
-  test("a 101-column whole case moves below equals with its header still attached") {
+  test("a 101-column whole case keeps its header inline and wraps the closing brace") {
     val name = "p" * (101 - "val result = values.map{ case Some() => v }".length)
 
     assertEquals(s"val result = values.map{ case Some($name) => v }".length, 101)
     check(s"val result=values.map{case Some($name)=>v}",
-      s"val result =\n  values.map{ case Some($name) => v }\n")
+      s"val result = values.map{ case Some($name) => v\n}\n")
   }
 
   test("an attached extractor header fitting exactly 100 columns keeps its arguments inline") {
@@ -142,19 +142,19 @@ class PartialFunctionLayoutSuite extends FunSuite {
     val name = "p" * (101 - "  values.map{ case Qualified.Pair(, second) =>".length)
 
     check("val result=values.map{case Some(value)=>{prepare(value);use(value)}}",
-      "val result =\n  values.map{ case Some(value) =>\n    prepare(value)\n    use(value)\n  }\n")
+      "val result = values.map{ case Some(value) =>\n  prepare(value)\n  use(value)\n}\n")
     check(s"val result=values.map{case Qualified.Pair($name,second)=>{prepare(value);use(value)}}",
       s"val result =\n  values.map{ case Qualified.Pair(\n      $name,\n      second\n    ) =>\n    prepare(value)\n    use(value)\n  }\n")
   }
 
   test("leading and footer comments retain case and body indentation") {
     check("val result=values.collect{// before\ncase Qualified.Carleasing(_,value)=>{use(value)// footer\n}}",
-      "val result =\n  values.collect{\n    // before\n    case Qualified.Carleasing(_, value) =>\n      use(value)\n      // footer\n  }\n")
+      "val result = values.collect{\n  // before\n  case Qualified.Carleasing(_, value) =>\n    use(value)\n    // footer\n}\n")
   }
 
   test("multiple-case argument blocks retain separate case lines") {
     check("val result=values.collect{case Some(x)=>f(x);case _=>fallback}",
-      "val result =\n  values.collect{\n    case Some(x) => f(x)\n    case _ => fallback\n  }\n")
+      "val result = values.collect{\n  case Some(x) => f(x)\n  case _ => fallback\n}\n")
   }
 
   test("standalone single-case partial functions retain their block layout") {

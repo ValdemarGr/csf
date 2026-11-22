@@ -20,7 +20,7 @@ private[csf] object Printer {
 
   private enum BodyExprDoc {
     case Direct(doc: Doc)
-    case Prio(header: Doc, leading: Doc, opening: Doc, flat: Option[(Doc, Int)], dotIndent: Int, tail: Int => Doc)
+    case Prio(header: Doc, leading: Doc, callee: Doc, flat: Option[(Doc, Int)], dotIndent: Int, scope: Int => Doc)
   }
 
   private enum InfixWork {
@@ -125,17 +125,17 @@ private[csf] object Printer {
       }
       assignmentSeparator + (body match {
         case Direct(doc) => doc
-        case Prio(header, leading, opening, flat, dotIndent, tail) =>
-          val (head, rhsOffset, tailOffset) = flat match {
+        case Prio(header, leading, callee, flat, dotIndent, scope) =>
+          val (receiver, rhsOffset, scopeOffset) = flat match {
             case Some((doc, width)) =>
               if (leading.isEmpty && assignmentHeaderWidth(header, indent) + 1 + width <= options.columns) {
                 (doc, 0, 0)
               } else if (indent + 2 + width <= options.columns) (doc, 2, 0)
-              else (opening, 2, dotIndent)
-            case None => (opening, 2, dotIndent)
+              else (callee, 2, dotIndent)
+            case None => (callee, 2, dotIndent)
           }
           val rhsIndent = indent + rhsOffset
-          val contents = head + tail(rhsIndent + tailOffset).nested(tailOffset)
+          val contents = receiver + scope(rhsIndent + scopeOffset).nested(scopeOffset)
           val footer = tokenComments(value, value.endOffset, rhsIndent)
           val start = if (rhsOffset == 0) Doc.space else hardLine
           (start + leading + contents + (if (footer.isEmpty) Doc.empty else hardLine + footer)).nested(rhsOffset)
@@ -144,41 +144,48 @@ private[csf] object Printer {
 
     private def prioritizedAssignment(term: Term, call: Term.Apply, header: Doc, indent: Int): Option[BodyExprDoc] = {
       val arguments = call.argClause
-      val parenthesized = arguments.values.nonEmpty && openingToken(arguments).exists(_.isInstanceOf[Token.LeftParen])
-      val lambda = arguments.values match {
-        case (block: Term.Block) :: Nil if bracedCall(arguments) =>
-          block.stats match {
-            case (function: Term.FunctionTerm) :: Nil if bracedLambda(function) => Some(function)
-            case _ => None
-          }
-        case _ => None
+      val braced = arguments.values.headOption.filter(_ => bracedCall(arguments)).filter {
+        case block: Term.Block => block.stats.nonEmpty
+        case _ => true
       }
-      Option.when(parenthesized || lambda.nonEmpty) {
+      val opener = braced.map(argument => bracedArgumentSpace(argument) + Doc.char('{')).orElse {
+        Option.when(arguments.values.nonEmpty && openingToken(arguments).exists(_.isInstanceOf[Token.LeftParen]))(
+          Doc.char('('))
+      }
+      opener.map { scopeOpening =>
         val rhsIndent = indent + 2
         val leading = leadingComments(term, rhsIndent, lineStart = true)
         val before = hardLineCount
         val (callee, dotIndent) = chainParts(call.fun, rhsIndent)
-        val (head, tail) = lambda match {
-          case Some(function) =>
-            val beforeHeader = hardLineCount
-            val head = bracedArrowHead(lambdaHeader(function, rhsIndent + dotIndent + 2))
+        val headerIndent = rhsIndent + dotIndent + 2
+        val beforeHeader = hardLineCount
+        val arrow = braced.flatMap {
+          case Term.Block(List(function: (Term.FunctionTerm | Term.PolyFunction))) if bracedLambda(function) =>
+            Some((bracedArrowHead(lambdaHeader(function, headerIndent)),
+              (depth: Int) => lambdaStatements(function, function.body, depth)))
+          case function: Term.PartialFunction =>
+            inlineArgumentCase(function).map { branch =>
+              (bracedArrowHead(caseHeader(branch, headerIndent) + arrowSuffix),
+                (depth: Int) => caseContents(branch, depth))
+            }
+          case _ => None
+        }
+        val scope = arrow match {
+          case Some((head, bodyAt)) =>
             val multilineHeader = hardLineCount != beforeHeader
-            (head, (depth: Int) => {
-              val body = closeArrowArgument(arrowTail(2)(lambdaStatements(function, function.body, depth + 2)),
-                multiline = multilineHeader)
+            (depth: Int) => {
+              val body = closeArrowArgument(head + arrowTail(2)(bodyAt(depth + 2)), multiline = multilineHeader)
               val remaining = tokenComments(arguments, arguments.endOffset, depth)
               body + (if (remaining.isEmpty) Doc.empty else hardLine + remaining + hardLine)
-            })
-          case None => (Doc.empty, (depth: Int) => tree(arguments, depth))
+            }
+          case None => (depth: Int) => tree(arguments, depth)
         }
-        val opening = callee + head.nested(dotIndent)
         val flat = Option.when(hardLineCount == before) {
-          val doc = opening.flatten
-          // Parenthesized scopes emit their opening delimiter with the arguments.
-          val preview = if (parenthesized) doc + Doc.char('(') else doc
+          val doc = callee.flatten
+          val preview = doc + arrow.fold(scopeOpening)(_._1.flatten)
           (doc, preview.maxWidth)
         }
-        BodyExprDoc.Prio(header, leading, opening, flat, dotIndent, tail)
+        BodyExprDoc.Prio(header, leading, callee, flat, dotIndent, scope)
       }
     }
 
@@ -923,6 +930,12 @@ private[csf] object Printer {
         case _ => false
       }
 
+    private def bracedArgumentSpace(argument: Term): Doc = argument match {
+      case Term.Block(List(_: Term.FunctionLike | _: Term.AnonymousFunction)) => Doc.empty
+      case _: Term.PartialFunction => Doc.empty
+      case _ => Doc.space
+    }
+
     private def parenthesizedInfixArgument(arguments: Term.ArgClause, value: Term): Boolean =
       arguments.begOffset < value.begOffset && openingToken(arguments).exists(_.isInstanceOf[Token.LeftParen])
 
@@ -957,17 +970,20 @@ private[csf] object Printer {
       }
     }
 
-    private def lambdaHeader(function: Term.FunctionTerm, indent: Int): Doc = {
-      val parameters = if (function.paramClause.values.lengthCompare(1) == 0) {
-        val parameter = function.paramClause.values.head
-        if (function.paramClause.mod.isEmpty && parameter.decltpe.isEmpty) tree(parameter, indent, lineStart = true)
-        else if (function.paramClause.mod.exists(_.isInstanceOf[Mod.Implicit])) {
-          val keyword = function.paramClause.mod.map(tree(_, indent, lineStart = true)).getOrElse(Doc.empty)
-          keyword + spaced(parameter, indent)
+    private def lambdaHeader(value: Term.FunctionTerm | Term.PolyFunction, indent: Int): Doc = value match {
+      case function: Term.FunctionTerm =>
+        val parameters = if (function.paramClause.values.lengthCompare(1) == 0) {
+          val parameter = function.paramClause.values.head
+          if (function.paramClause.mod.isEmpty && parameter.decltpe.isEmpty) tree(parameter, indent, lineStart = true)
+          else if (function.paramClause.mod.exists(_.isInstanceOf[Mod.Implicit])) {
+            val keyword = function.paramClause.mod.map(tree(_, indent, lineStart = true)).getOrElse(Doc.empty)
+            keyword + spaced(parameter, indent)
+          } else tree(function.paramClause, indent, lineStart = true)
         } else tree(function.paramClause, indent, lineStart = true)
-      } else tree(function.paramClause, indent, lineStart = true)
-      val arrow = if (function.isInstanceOf[Term.ContextFunction]) " ?=>" else " =>"
-      parameters + Doc.text(arrow)
+        val arrow = if (function.isInstanceOf[Term.ContextFunction]) " ?=>" else " =>"
+        parameters + Doc.text(arrow)
+      case function: Term.PolyFunction =>
+        tree(function.tparamClause, indent, lineStart = true) + arrowSuffix
     }
 
     @annotation.tailrec
@@ -1033,6 +1049,12 @@ private[csf] object Printer {
           }
         case _ => body
       }
+    }
+
+    private def inlineArgumentCase(function: Term.PartialFunction): Option[Case] = function.cases match {
+      case branch :: Nil if argumentClause(function).nonEmpty && firstCommentLine(branch.begOffset).isEmpty &&
+          !branch.body.isInstanceOf[Term.SubMatch] => Some(branch)
+      case _ => None
     }
 
     private def caseArgument(branch: Case, indent: Int): Doc =
@@ -1221,19 +1243,13 @@ private[csf] object Printer {
       case function: Term.ContextFunction => lambda(function, indent)
       case lambda: Term.PolyFunction => {
         val braced = bracedLambda(lambda)
-        arrowBody(tree(lambda.tparamClause, if (braced) indent + 2 else indent, lineStart = true) + arrowSuffix, braced) {
+        arrowBody(lambdaHeader(lambda, if (braced) indent + 2 else indent), braced) {
           if (braced) lambdaStatements(lambda, lambda.body, indent + 2)
           else lambdaBody(lambda, indent + 2)
         }
       }
-      case function: Term.PartialFunction if function.cases.lengthCompare(1) == 0 && argumentClause(function).nonEmpty => {
-        val branch = function.cases.head
-        if (firstCommentLine(branch.begOffset).nonEmpty || branch.body.isInstanceOf[Term.SubMatch]) {
-          braces(statements(function, function.cases, indent + 2))
-        } else caseArgument(branch, indent)
-      }
       case function: Term.PartialFunction =>
-        braces(statements(function, function.cases, indent + 2))
+        inlineArgumentCase(function).fold(braces(statements(function, function.cases, indent + 2)))(caseArgument(_, indent))
       case loop: Term.For => {
         val enumerators = tree(loop.enumsBlock, indent)
         val body = requiredBlock(loop.body, indent)
@@ -1624,13 +1640,7 @@ private[csf] object Printer {
           case single :: Nil if bracedCall(arguments) => {
               val body = tree(single, indent)
               val remaining = tokenComments(arguments, arguments.endOffset, indent)
-              val space = single match {
-                case block: Term.Block if block.stats.lengthCompare(1) == 0 &&
-                    block.stats.head.isInstanceOf[Term.FunctionLike | Term.AnonymousFunction] => Doc.empty
-                case _: Term.PartialFunction => Doc.empty
-                case _ => Doc.space
-              }
-              space + body +
+              bracedArgumentSpace(single) + body +
               (if (remaining.isEmpty) Doc.empty else hardLine + remaining + hardLine)
             }
           case _ => {
