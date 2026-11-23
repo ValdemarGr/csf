@@ -69,7 +69,7 @@ class CaseClassFieldLayoutSuite extends FunSuite {
 
   test("ordinary classes and method definitions and declarations retain their width-based layout") {
     assertEquals(format("class Entry(first:Int,second:String){}"),
-      "class Entry(first: Int, second: String) {}\n")
+      "class Entry(first: Int, second: String)\n")
     assertEquals(format("def f(first:Int,second:String):Int=first"),
       "def f(first: Int, second: String): Int = first\n")
     assertEquals(format("trait Api{def f(first:Int,second:String):Int}"),

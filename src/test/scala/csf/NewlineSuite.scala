@@ -78,7 +78,7 @@ class NewlineSuite extends FunSuite {
     }
 
     List(
-      ("class", "class Item", "class Item {}"),
+      ("class", "class Item", "class Item"),
       ("case class", "case class Item(value:Int)", "case class Item(value: Int)"),
       ("trait", "trait Item", "trait Item"),
       ("object", "object Item", "object Item"),

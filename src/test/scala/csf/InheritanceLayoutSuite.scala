@@ -80,7 +80,7 @@ class InheritanceLayoutSuite extends FunSuite {
 
   test("short class trait object enum and package-object inheritance stays inline") {
     List(
-      "class Child extends Parent{}" -> "class Child extends Parent {}\n",
+      "class Child extends Parent{}" -> "class Child extends Parent\n",
       "trait Child extends Parent{}" -> "trait Child extends Parent\n",
       "object Child extends Parent{}" -> "object Child extends Parent\n",
       "enum Child extends Parent{case Value}" -> "enum Child extends Parent {\n  case Value\n}\n",

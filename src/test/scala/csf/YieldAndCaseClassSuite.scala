@@ -137,9 +137,11 @@ class YieldAndCaseClassSuite extends FunSuite {
       "case class Box(value: Int) {\n  def get = value\n}\n")
   }
 
-  test("empty regular classes retain braces while empty traits omit them") {
-    assertEquals(format("class Empty"), "class Empty {}\n")
+  test("empty regular classes and traits omit their body with or without source braces") {
+    val privateConstructor = "final class UIDescription private (val setup: Setup[UIDescription.Api])"
     List(
+      "class Empty" -> "class Empty\n",
+      privateConstructor -> (privateConstructor + "\n"),
       "trait Base" -> "trait Base\n",
       "trait Container[A]" -> "trait Container[A]\n",
       "trait Container[A]extends Parent[A]" -> "trait Container[A] extends Parent[A]\n",
@@ -165,8 +167,8 @@ class YieldAndCaseClassSuite extends FunSuite {
       "object Container {\n  trait Marker\n\n  object Empty\n\n  case object Ready extends Status\n}\n")
   }
 
-  test("trait and object comments self types and declarations retain their body braces") {
-    List("trait Marker", "object Empty", "case object Ready").foreach { header =>
+  test("class trait and object comments self types and declarations retain their body braces") {
+    List("class Empty", "trait Marker", "object Empty", "case object Ready").foreach { header =>
       assertEquals(format(header + "{/* keep */}"), header + " {\n  /* keep */\n}\n")
       assertEquals(format(header + "{self:Requirement=>}"), header + " {\n  self: Requirement =>\n}\n")
       assertEquals(format(header + "{val size=1}"), header + " {\n  val size = 1\n}\n")

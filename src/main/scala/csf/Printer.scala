@@ -1088,8 +1088,7 @@ private[csf] object Printer {
     private def canOmitEmptyBody(body: Template.Body): Boolean =
       body.selfOpt.isEmpty && body.stats.isEmpty && body.parent.exists {
         case template: Template => template.parent.exists {
-          case _: Defn.Trait | _: Defn.Object => true
-          case definition: Defn.Class => definition.mods.exists(_.isInstanceOf[Mod.Case])
+          case _: Defn.Class | _: Defn.Trait | _: Defn.Object => true
           case _ => false
         }
         case _ => false
