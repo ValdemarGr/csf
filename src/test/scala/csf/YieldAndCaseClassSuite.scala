@@ -164,7 +164,7 @@ class YieldAndCaseClassSuite extends FunSuite {
 
   test("nested empty traits and objects remain separate members after body omission") {
     assertEquals(format("object Container{trait Marker{};object Empty{};case object Ready extends Status{}}"),
-      "object Container {\n  trait Marker\n\n  object Empty\n\n  case object Ready extends Status\n}\n")
+      "object Container {\n  trait Marker\n  object Empty\n  case object Ready extends Status\n}\n")
   }
 
   test("class trait and object comments self types and declarations retain their body braces") {
@@ -184,21 +184,21 @@ class YieldAndCaseClassSuite extends FunSuite {
       assertEquals(format(header + trailing), header + trailing + "\n")
     }
     assertEquals(format("trait Marker{}\n// next member\nobject Empty{}"),
-      "trait Marker\n\n// next member\nobject Empty\n")
+      "trait Marker\n// next member\nobject Empty\n")
   }
 
-  test("AggregateStatus omits empty bodies while normalizing declaration gaps") {
+  test("AggregateStatus omits empty bodies while preserving declaration gaps") {
     val source = "sealed trait AggregateStatus extends EnumEntry.Snakecase {}\n" +
       "object AggregateStatus extends Enum[AggregateStatus] {\n" +
       "  val values = findValues\n\n" +
       "  case object Progress extends AggregateStatus {}\n" +
       "  case object Completed extends AggregateStatus {}\n" +
       "  case object Failed extends AggregateStatus {}\n}"
-    val expected = "sealed trait AggregateStatus extends EnumEntry.Snakecase\n\n" +
+    val expected = "sealed trait AggregateStatus extends EnumEntry.Snakecase\n" +
       "object AggregateStatus extends Enum[AggregateStatus] {\n" +
       "  val values = findValues\n\n" +
-      "  case object Progress extends AggregateStatus\n\n" +
-      "  case object Completed extends AggregateStatus\n\n" +
+      "  case object Progress extends AggregateStatus\n" +
+      "  case object Completed extends AggregateStatus\n" +
       "  case object Failed extends AggregateStatus\n}\n"
 
     assertEquals(format(source), expected)

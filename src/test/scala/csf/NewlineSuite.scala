@@ -35,17 +35,17 @@ class NewlineSuite extends FunSuite {
     val gap = "\n" * (blanks + 1)
     val boundedGap = "\n" * (blanks.min(1) + 1)
 
-    test(s"top-level definitions use one blank line with $blanks source blank lines") {
+    test(s"top-level imports and definitions retain at most one of $blanks source blank lines") {
       val source = List("import a.A", "import b.B", "def first=1", "def second=2").mkString(gap)
-      val expected = "import a.A" + boundedGap + "import b.B\n\ndef first = 1\n\ndef second = 2\n"
+      val expected = List("import a.A", "import b.B", "def first = 1", "def second = 2").mkString(boundedGap) + "\n"
 
       check(source, expected)
     }
 
-    test(s"mixed object members use one blank line around methods with $blanks source blank lines") {
+    test(s"mixed object members retain at most one of $blanks source blank lines around methods") {
       val source = "object Example{" + List("val first=1", "def second=2", "val third=3").mkString(gap) + "}"
       val expected = "object Example {\n" +
-        List("  val first = 1", "  def second = 2", "  val third = 3").mkString("\n\n") + "\n}\n"
+        List("  val first = 1", "  def second = 2", "  val third = 3").mkString(boundedGap) + "\n}\n"
 
       check(source, expected)
     }
@@ -85,29 +85,29 @@ class NewlineSuite extends FunSuite {
       ("enum", "enum Item{case Value}", "enum Item {\n  case Value\n}"),
       ("type alias", "type Item=Int", "type Item = Int"),
     ).foreach { case (kind, declaration, formatted) =>
-      test(s"$kind declarations have one blank line on both sides with $blanks source blank lines") {
+      test(s"$kind declarations retain at most one of $blanks source blank lines on both sides") {
         val source = "object Example{val before=1" + gap + declaration + gap + "val after=2}"
-        val expected = "object Example {\n  val before = 1\n\n" +
-          formatted.linesIterator.map("  " + _).mkString("\n") + "\n\n  val after = 2\n}\n"
+        val expected = "object Example {\n  val before = 1" + boundedGap +
+          formatted.linesIterator.map("  " + _).mkString("\n") + boundedGap + "  val after = 2\n}\n"
 
         check(source, expected)
       }
     }
 
-    test(s"abstract methods and types have fixed gaps with $blanks source blank lines") {
+    test(s"abstract methods and types retain at most one of $blanks source blank lines") {
       val source = "trait Example{" +
         List("val before:Int", "def value:Int", "type Item", "val after:Item").mkString(gap) + "}"
-      val expected = "trait Example {\n  val before: Int\n\n  def value: Int\n\n" +
-        "  type Item\n\n  val after: Item\n}\n"
+      val expected = "trait Example {\n" +
+        List("  val before: Int", "  def value: Int", "  type Item", "  val after: Item").mkString(boundedGap) + "\n}\n"
 
       check(source, expected)
     }
 
-    test(s"method docs remain attached after a fixed gap with $blanks source blank lines") {
+    test(s"method docs stay attached with $blanks source blank lines before the comment batch") {
       val source = "object Example{val before=1" + gap +
         "/** Method docs. */\n\n// More detail.\n\n@deprecated def value=2" + gap + "val after=3}"
-      val expected = "object Example {\n  val before = 1\n\n  /** Method docs. */\n" +
-        "  // More detail.\n  @deprecated def value = 2\n\n  val after = 3\n}\n"
+      val expected = "object Example {\n  val before = 1" + boundedGap + "  /** Method docs. */\n" +
+        "  // More detail.\n  @deprecated def value = 2" + boundedGap + "  val after = 3\n}\n"
 
       check(source, expected)
     }
@@ -118,22 +118,22 @@ class NewlineSuite extends FunSuite {
       "object Example {\n  val first = 1\n  val second = 2\n}\n")
   }
 
-  test("same-line methods acquire exactly one blank line") {
+  test("same-line methods move to consecutive lines") {
     check("object Example{def first=1;def second=2}",
-      "object Example {\n  def first = 1\n\n  def second = 2\n}\n")
+      "object Example {\n  def first = 1\n  def second = 2\n}\n")
   }
 
-  test("secondary constructors have one blank line before and after") {
+  test("same-line secondary constructors move to consecutive lines with other members") {
     check("class Example(seed:Int){val before=1;def this()=this(0);val after=2}",
-      "class Example(seed: Int) {\n  val before = 1\n\n  def this() = {\n" +
-        "    this(0)\n  }\n\n  val after = 2\n}\n")
+      "class Example(seed: Int) {\n  val before = 1\n  def this() = {\n" +
+        "    this(0)\n  }\n  val after = 2\n}\n")
   }
 
-  test("local methods and types separate from ordinary statements without changing body grouping") {
+  test("same-line local methods and types move to consecutive lines with ordinary statements") {
     val source = "def run()={val first=1;def next()=first;val second=next();type Result=Int;" +
       "val result:Result=second;result}"
-    val expected = "def run() = {\n  val first = 1\n\n  def next() = first\n\n  val second = next()\n\n" +
-      "  type Result = Int\n\n  val result: Result = second\n  result\n}\n"
+    val expected = "def run() = {\n  val first = 1\n  def next() = first\n  val second = next()\n" +
+      "  type Result = Int\n  val result: Result = second\n  result\n}\n"
 
     check(source, expected)
   }
@@ -157,9 +157,13 @@ class NewlineSuite extends FunSuite {
       "object Example {\n  call();\n\n  /* Next expression */\n  (first, second)\n}\n")
   }
 
-  test("a method's separator precedes the following statement's attached comment and fixed gap") {
-    check("object Example{def first=1;\n/* Next expression */\n(first,second)}",
-      "object Example {\n  def first = 1;\n\n  /* Next expression */\n  (first, second)\n}\n")
+  test("a method's separator precedes the bounded gap and the following statement's attached comment") {
+    List(0, 1, 3).foreach { blanks =>
+      val gap = "\n" * (blanks + 1)
+      val boundedGap = "\n" * (blanks.min(1) + 1)
+      check("object Example{def first=1;" + gap + "/* Next expression */\n(first,second)}",
+        "object Example {\n  def first = 1;" + boundedGap + "  /* Next expression */\n  (first, second)\n}\n")
+    }
   }
 
   test("a unary expression's attached line comment follows the separator and retained grouping gap") {

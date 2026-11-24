@@ -64,7 +64,11 @@ class LeafPrinterSuite extends FunSuite {
 
   test("numeric emission retains established canonical spellings") {
     val examples = List(
-      "0xFF" -> "255",
+      "0xFF" -> "0xFF",
+      "(0XFE_EDl)" -> "0XFE_EDl",
+      "-0xFFFF_FFFF" -> "-0xFFFF_FFFF",
+      "0b10_01" -> "0b10_01",
+      "-0B10_01L" -> "-0B10_01L",
       "+1" -> "1",
       "-12" -> "-12",
       "1_000L" -> "1000L",

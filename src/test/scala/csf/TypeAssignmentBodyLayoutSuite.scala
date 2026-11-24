@@ -62,12 +62,12 @@ class TypeAssignmentBodyLayoutSuite extends FunSuite {
 
   test("bare refinements keep their opening brace beside equals") {
     check("type Protocol={def send(value:String):Int;type Result=String}",
-      "type Protocol = {\n  def send(value: String): Int\n\n  type Result = String\n}\n")
+      "type Protocol = {\n  def send(value: String): Int\n  type Result = String\n}\n")
   }
 
   test("refinements with a base type move the whole RHS below equals") {
     check("type Protocol=Base{def send(value:String):Int;type Result=String}",
-      "type Protocol =\n  Base {\n    def send(value: String): Int\n\n    type Result = String\n  }\n")
+      "type Protocol =\n  Base {\n    def send(value: String): Int\n    type Result = String\n  }\n")
   }
 
   test("a line comment before an alias RHS keeps its order and indentation") {

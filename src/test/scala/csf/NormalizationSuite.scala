@@ -61,6 +61,7 @@ class NormalizationSuite extends FunSuite {
   }
 
   test("braced call arguments retain their blocks and arity") {
+    assertEquals(format("val result=doThing{Data(42)}"), "val result = doThing {\n  Data(42)\n}\n")
     List(
       "val result=combine({{{first}}},{{second}})",
       "val result=call(value={{{next}}})",

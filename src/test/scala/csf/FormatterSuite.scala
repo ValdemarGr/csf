@@ -31,19 +31,18 @@ class FormatterSuite extends FunSuite {
     source.tokenize.get.collect { case comment: Token.Comment => comment.text }.toList
   }
 
-  test("method boundaries normalize independently of source blank lines") {
+  test("method boundaries preserve a source blank line") {
     val compact = "object Example{val x=1;def echo(value:Int):Int=value}"
     val spaced = "object  Example  {\n\n val   x =  1\n\n def echo ( value : Int ) : Int = value\n}"
     val expected =
       """object Example {
         |  val x = 1
-        |
         |  def echo(value: Int): Int = value
         |}
         |""".stripMargin
 
     assertEquals(formatted(compact), expected)
-    assertEquals(formatted(spaced), expected)
+    assertEquals(formatted(spaced), expected.replace("\n  def", "\n\n  def"))
   }
 
   test("significant indentation for an object body returns a parse error") {
@@ -124,12 +123,17 @@ class FormatterSuite extends FunSuite {
     val source =
       "object Example { val café = \"  hello\\nworld  \"; " +
         "val text = \"\"\"first\n    second\n\nthird\"\"\"; " +
-        "val escaped = '\\n'; val number = 0xFF; val decimal = 1.2500 }"
+        "val escaped = '\\n'; val number = 0xFF; val decimal = 1.2500; " +
+        "val mask = 0xFFFF_FFFF.toHexString; val signed = (-0xFFFF_FFFF).toHexString; val bits = 0B10_01L }"
     val result = formatted(source)
 
     assertEquals(structure(result), structure(source))
     assert(result.contains("\"  hello\\nworld  \""))
     assert(result.contains("\"\"\"first\n    second\n\nthird\"\"\""))
+    assert(result.contains("val number = 0xFF"), result)
+    assert(result.contains("val mask = 0xFFFF_FFFF.toHexString"), result)
+    assert(result.contains("val signed = (-0xFFFF_FFFF).toHexString"), result)
+    assert(result.contains("val bits = 0B10_01L"), result)
     assertEquals(formatted(result), result)
   }
 

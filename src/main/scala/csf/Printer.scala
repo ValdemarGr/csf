@@ -421,15 +421,9 @@ private[csf] object Printer {
       if (separate && commentIndex > start) result + hardLine else result
     }
 
-    private def statementGap(previousLine: Int, nextLine: Int, indent: Int, separate: Boolean = false): Doc = {
-      if (separate || nextLine > previousLine + 1) hardLine.nested(-indent) + hardLine
+    private def statementGap(previousLine: Int, nextLine: Int, indent: Int): Doc = {
+      if (nextLine > previousLine + 1) hardLine.nested(-indent) + hardLine
       else hardLine
-    }
-
-    private def blankLineAround(value: Tree): Boolean = value match {
-      case _: Defn.Def | _: Decl.Def | _: Defn.Macro | _: Ctor.Secondary |
-          _: Member.Type | _: Defn.Object => true
-      case _ => false
     }
 
     private def tokenComments(value: Tree, before: Int, indent: Int): Doc = {
@@ -485,11 +479,9 @@ private[csf] object Printer {
       val docs = ArrayBuffer.empty[Doc]
       val iterator = values.iterator.buffered
       var previousLine = -1
-      var previousDeclaration = false
       var boundaryComments = false
       while (iterator.hasNext) {
         val value = iterator.next()
-        val declaration = blankLineAround(value)
         val firstLine = firstCommentLine(value.begOffset).getOrElse(value.pos.startLine)
         val before = comments(value.begOffset, indent, separate = true)
         val beforeBodyComments = commentIndex
@@ -501,7 +493,7 @@ private[csf] object Printer {
         val afterBodyComments = commentIndex
         val gap = if (previousLine < 0) Doc.empty
         else if (boundaryComments) hardLine
-        else statementGap(previousLine, firstLine, indent, previousDeclaration || declaration)
+        else statementGap(previousLine, firstLine, indent)
         val needsSeparator = iterator.hasNext && ((value, iterator.head) match {
           case (definition: Defn.Val, next: Term)
               if expression(next).isInstanceOf[Lit.Unit] && expression(definition.rhs).isInstanceOf[Lit.Unit] => false
@@ -517,8 +509,7 @@ private[csf] object Printer {
         val following = if (needsSeparator) comments(iterator.head.begOffset, indent) else Doc.empty
         val followingLeading = following.nonEmpty && semicolon.forall(_.start < commentTokens(afterBodyComments).start)
         val followingGap = if (followingLeading) {
-          statementGap(endLine, commentTokens(afterBodyComments).pos.startLine, indent,
-            declaration || blankLineAround(iterator.head))
+          statementGap(endLine, commentTokens(afterBodyComments).pos.startLine, indent)
         } else if (following.isEmpty) Doc.empty else hardLine
         val separator = if (!needsSeparator) Doc.empty
         else if (afterBodyComments > beforeBodyComments || (following.nonEmpty && !followingLeading)) {
@@ -533,7 +524,6 @@ private[csf] object Printer {
         if (!followingLeading && separator.nonEmpty) docs += separator
         previousLine = if (commentIndex == 0) endLine
         else endLine.max(commentTokens(commentIndex - 1).pos.endLine)
-        previousDeclaration = declaration
         boundaryComments = followingLeading
       }
       val remaining = tokenComments(container, container.endOffset, indent)
@@ -913,14 +903,14 @@ private[csf] object Printer {
     }
 
     @annotation.tailrec
-    private def argumentClause(value: Tree): Option[Term.ArgClause] = value.parent match {
+    private def argumentClause(value: Tree, throughLambda: Boolean = true): Option[Term.ArgClause] = value.parent match {
       case Some(arguments: Term.ArgClause) => Some(arguments)
-      case Some(block: Term.Block) => argumentClause(block)
-      case Some(assignment: Term.Assign) if assignment.rhs eq value => argumentClause(assignment)
-      case Some(ascribed: Term.Ascribe) if ascribed.expr eq value => argumentClause(ascribed)
-      case Some(annotated: Term.Annotate) if annotated.expr eq value => argumentClause(annotated)
-      case Some(function: Term.FunctionLike) if function.body eq value => argumentClause(function)
-      case Some(function: Term.AnonymousFunction) if function.body eq value => argumentClause(function)
+      case Some(block: Term.Block) => argumentClause(block, throughLambda)
+      case Some(assignment: Term.Assign) if assignment.rhs eq value => argumentClause(assignment, throughLambda)
+      case Some(ascribed: Term.Ascribe) if ascribed.expr eq value => argumentClause(ascribed, throughLambda)
+      case Some(annotated: Term.Annotate) if annotated.expr eq value => argumentClause(annotated, throughLambda)
+      case Some(function: Term.FunctionLike) if throughLambda && (function.body eq value) => argumentClause(function)
+      case Some(function: Term.AnonymousFunction) if throughLambda && (function.body eq value) => argumentClause(function)
       case _ => None
     }
 
@@ -942,7 +932,7 @@ private[csf] object Printer {
 
     private def renderArgumentBlock(block: Term.Block, indent: Int): Doc = block.stats match {
       case (function: (Term.FunctionLike | Term.AnonymousFunction)) :: Nil => tree(function, indent)
-      case (_: Term) :: Nil =>
+      case (_: Term) :: Nil if argumentClause(block, throughLambda = false).isEmpty =>
         val before = hardLineCount
         val beforeComments = commentIndex
         val contents = statements(block, block.stats, indent + 2)

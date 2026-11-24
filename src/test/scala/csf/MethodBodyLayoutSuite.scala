@@ -41,7 +41,7 @@ class MethodBodyLayoutSuite extends FunSuite {
       "def run() = {\n  prepare()\n  finish()\n}\n")
     check("def idle()={}", "def idle() = {\n}\n")
     check("def outer={def inner[A](value:A)=value;inner(1)}",
-      "def outer = {\n  def inner[A](value: A) = value\n\n  inner(1)\n}\n")
+      "def outer = {\n  def inner[A](value: A) = value\n  inner(1)\n}\n")
   }
 
   test("typed partial-function methods attach their brace to equals and preserve blank case gaps") {
@@ -72,7 +72,7 @@ class MethodBodyLayoutSuite extends FunSuite {
     check("def text:String=\"\"\"first\n  second\nlast\"\"\"",
       "def text: String =\n  \"\"\"first\n  second\nlast\"\"\"\n")
     check("object Example{def first=1// footer\n// next method\ndef second=2}",
-      "object Example {\n  def first = 1\n\n  // footer\n  // next method\n  def second = 2\n}\n")
+      "object Example {\n  def first = 1\n  // footer\n  // next method\n  def second = 2\n}\n")
   }
 
   test("collapseStatuses starts below equals while its short condition stays inline") {

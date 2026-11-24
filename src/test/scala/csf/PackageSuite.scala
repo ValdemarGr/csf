@@ -33,7 +33,7 @@ class PackageSuite extends FunSuite {
 
   test("ordinary package headers leave their body unindented") {
     check("package example\n\n\n\nimport a.A\nobject Example{val x=1}",
-      "package example\n\nimport a.A\n\nobject Example {\n  val x = 1\n}\n")
+      "package example\n\nimport a.A\nobject Example {\n  val x = 1\n}\n")
   }
 
   test("redundant braces around a whole-file package chain are removed") {

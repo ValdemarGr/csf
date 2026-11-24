@@ -65,16 +65,37 @@ private[csf] object LeafPrinter {
     fallback
   }
 
+  private def radixLiteral(value: Lit): Option[String] = {
+    value.origin match {
+      case parsed: Origin.ParsedPartial =>
+        val tokens = parsed.allInputTokens()
+        var index = parsed.begTokenIdx
+        while (index < parsed.endTokenIdx) {
+          tokens(index) match {
+            case token: Token.NumericConstant[?] =>
+              val text = token.text
+              return Option.when(text.length >= 2 && text(0) == '0' && "xXbB".contains(text(1))) {
+                if (parsedMinus(value)) "-" + text else text
+              }
+            case _ => ()
+          }
+          index += 1
+        }
+      case _ => ()
+    }
+    None
+  }
+
   def literal(value: Lit): String = value match {
-    case literal: Lit.Int => literal.value.toString
-    case literal: Lit.Long => literal.value.toString + "L"
+    case literal: Lit.Int => radixLiteral(literal).getOrElse(literal.value.toString)
+    case literal: Lit.Long => radixLiteral(literal).getOrElse(literal.value.toString + "L")
     case literal: Lit.Float =>
       val format = if (isNegative(literal) && !literal.format.startsWith("-")) "-" + literal.format
       else literal.format
       if (format.last.toLower == 'f') format else format + "f"
     case literal: Lit.Double =>
       (if (isNegative(literal) && !literal.format.startsWith("-")) "-" else "") + literal.format + "d"
-    case literal: Lit.IntXL => literal.value.toString
+    case literal: Lit.IntXL => radixLiteral(literal).getOrElse(literal.value.toString)
     case literal: Lit.FloatXL =>
       literal.digits + (if (literal.exponent.isEmpty) "" else "e" + literal.exponent)
     case literal: Lit.WithUnary => name(literal.op) + this.literal(literal.arg)
@@ -95,13 +116,13 @@ private[csf] object LeafPrinter {
   }
 
   def isNegative(value: Lit): Boolean = value match {
-    case literal: Lit.Int => literal.value < 0
-    case literal: Lit.Long => literal.value < 0L
+    case literal: Lit.Int => radixLiteral(literal).fold(literal.value < 0)(_.startsWith("-"))
+    case literal: Lit.Long => radixLiteral(literal).fold(literal.value < 0L)(_.startsWith("-"))
     case literal: Lit.Float => literal.format.startsWith("-") ||
       literal.value == 0.0f && parsedMinus(literal)
     case literal: Lit.Double => literal.format.startsWith("-") ||
       literal.value == 0.0d && parsedMinus(literal)
-    case literal: Lit.IntXL => literal.value.toString.startsWith("-")
+    case literal: Lit.IntXL => radixLiteral(literal).fold(literal.value.toString.startsWith("-"))(_.startsWith("-"))
     case literal: Lit.FloatXL => literal.digits.startsWith("-")
     case literal: Lit.WithUnary => literal.op.value.startsWith("-")
     case _ => false
