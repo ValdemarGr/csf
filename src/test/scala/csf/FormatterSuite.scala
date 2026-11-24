@@ -46,21 +46,16 @@ class FormatterSuite extends FunSuite {
     assertEquals(formatted(spaced), expected)
   }
 
-  test("significant indentation input emits braces") {
+  test("significant indentation for an object body returns a parse error") {
     val source =
       """object Example:
         |  val x = 1
         |  def echo(value: Int): Int = value
         |""".stripMargin
-    val expected =
-      """object Example {
-        |  val x = 1
-        |
-        |  def echo(value: Int): Int = value
-        |}
-        |""".stripMargin
-
-    assertEquals(formatted(source), expected)
+    Formatter.format(source) match {
+      case Left(FormatError.Parse(details)) => assert(details.nonEmpty)
+      case other => fail(s"Expected parse error, got $other")
+    }
   }
 
   test("empty source remains empty") {

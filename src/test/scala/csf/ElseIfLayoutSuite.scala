@@ -4,7 +4,7 @@ import munit.FunSuite
 import scala.meta.*
 
 class ElseIfLayoutSuite extends FunSuite {
-  private given Dialect = dialects.Scala3
+  private given Dialect = dialects.Scala3.withAllowSignificantIndentation(false)
 
   private def structure(value: Any): Any = value match {
     case Term.Block(List(term: Term)) => structure(term)
@@ -16,10 +16,7 @@ class ElseIfLayoutSuite extends FunSuite {
 
   private def format(source: String, options: FormatOptions = FormatOptions()): String = {
     val result = Formatter.format(source, options).fold(error => fail(error.getMessage), identity)
-    val reparsed = {
-      given Dialect = dialects.Scala3.withAllowSignificantIndentation(false)
-      result.parse[Source].get
-    }
+    val reparsed = result.parse[Source].get
     assertEquals(structure(reparsed), structure(source.parse[Source].get), result)
     assertEquals(
       result.tokenize.get.collect { case comment: Token.Comment => comment.text }.toList,
@@ -33,10 +30,10 @@ class ElseIfLayoutSuite extends FunSuite {
     val result = format(
       """def run =
         |  if (/* first check */ if ready then true else false) /* then */
-        |    while ready do
+        |    while ready do {
         |      use()
         |      finish()
-        |  else if other // before then
+        |    } else if other // before then
         |  then while (// keep checking
         |    ready) /* do */ wait()
         |""".stripMargin)
@@ -99,16 +96,22 @@ class ElseIfLayoutSuite extends FunSuite {
     format("val result=if(first)one else // before\nif(second)two else other")
   }
 
-  test("leading footer and nested comments survive removing a redundant else block") {
+  test("leading and nested comments survive removing a redundant else block") {
     List(
       "val result=if(first)one else{/* inside */if(second)two else other}",
-      "val result=if(first)one else{if(second)two else other // footer\n}",
       "val result=if(first)one else{if(second){/* nested */two}else other}",
     ).foreach { source =>
       val result = format(source)
       val conditional = result.parse[Source].get.collect { case conditional: Term.If => conditional }.head
       assert(conditional.elsep.isInstanceOf[Term.If], result)
     }
+  }
+
+  test("else blocks retain their footer comments") {
+    val source = "val result=if(first)one else{if(second)two else other // footer\n}"
+    val result = format(source)
+    assert(result.contains("} else {\n    if second then {"), result)
+    assert(result.contains("    }\n    // footer\n  }"), result)
   }
 
   test("multistatement else blocks retain the scope of their local declaration") {

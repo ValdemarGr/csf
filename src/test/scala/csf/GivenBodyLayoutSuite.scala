@@ -118,7 +118,7 @@ class GivenBodyLayoutSuite extends FunSuite {
   test("given RHS comments retain standalone leading and footer placement") {
     assertEquals(format("given answer:Int=/* body */42"), "given answer: Int =\n  /* body */\n  42\n")
     assertEquals(format("given answer:Int=// note\n42"), "given answer: Int =\n  // note\n  42\n")
-    assertEquals(format("given answer:Int={42 // footer\n}"), "given answer: Int =\n  42\n  // footer\n")
+    assertEquals(format("given answer:Int={42 // footer\n}"), "given answer: Int = {\n  42\n  // footer\n}\n")
   }
 
   test("nested given aliases indent their RHS below their declaration") {

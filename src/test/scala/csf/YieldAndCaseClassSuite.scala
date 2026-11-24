@@ -58,9 +58,10 @@ class YieldAndCaseClassSuite extends FunSuite {
     assert(result.linesIterator.forall(_.length <= 100), result)
   }
 
-  test("comments around a single yield expression survive removing its source block") {
+  test("yield drops a leading-only wrapper and retains blocks with footer comments") {
+    val leading = format("val result=for(x<-xs)yield{/* before */x}")
+    assert(!leading.contains("} yield {"), leading)
     List(
-      "val result=for(x<-xs)yield{/* before */x}",
       "val result=for(x<-xs)yield{x // footer\n}",
       "val result=for(x<-xs)yield{/* before */x /* footer */}",
       "object Example{val result=for(x<-xs)yield{x // footer\n};val next=after}",
@@ -68,8 +69,7 @@ class YieldAndCaseClassSuite extends FunSuite {
       "val result=(for(x<-xs)yield{x // footer\n}) + other",
     ).foreach { source =>
       val result = format(source)
-      val bodies = result.parse[Source].get.collect { case loop: Term.ForYield => loop.body }
-      assert(bodies.forall(body => !body.isInstanceOf[Term.Block]), result)
+      assert(result.contains("} yield {"), result)
     }
   }
 

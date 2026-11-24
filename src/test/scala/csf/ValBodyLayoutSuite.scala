@@ -110,7 +110,7 @@ class ValBodyLayoutSuite extends FunSuite {
   test("leading line and footer comments retain their contents and RHS placement") {
     assertEquals(format("val answer=/* body */42"), "val answer =\n  /* body */\n  42\n")
     assertEquals(format("val answer=// note\n  42"), "val answer =\n  // note\n  42\n")
-    assertEquals(format("val answer={42 // footer\n}"), "val answer =\n  42\n  // footer\n")
+    assertEquals(format("val answer={42 // footer\n}"), "val answer = {\n  42\n  // footer\n}\n")
   }
 
   test("nested vals retain their indentation while triple-quoted literal lines remain data") {

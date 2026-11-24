@@ -255,29 +255,15 @@ private[csf] object Printer {
       case _ => value
     }
 
-    private def rhsCommentNeedsBlock(value: Term, canonical: Term): Boolean = value match {
+    private def rhsCommentNeedsBlock(value: Term, canonical: Term): Boolean =
+      blockHasFooter(value, canonical) || commentTokens.iterator.drop(commentIndex)
+        .takeWhile(_.end <= canonical.begOffset).exists(_.text.contains('\n'))
+
+    private def blockHasFooter(value: Term, canonical: Term): Boolean = value match {
       case block: Term.Block if !(block eq canonical) && commentIndex < commentTokens.length => {
-        val end = block.endOffset
         var index = commentIndex
-        while (index < commentTokens.length && commentTokens(index).end <= end) index += 1
-        val footer = index > commentIndex && commentTokens(index - 1).start >= canonical.endOffset &&
-          commentTokens(index - 1).text.startsWith("//")
-        val owner: Tree = block.parent match {
-          case Some(assignment: Term.Assign) if assignment.rhs eq block => assignment
-          case Some(parameter: Term.Param) if parameter.default.exists(_ eq block) => parameter
-          case _ => block
-        }
-        footer && (owner.origin match {
-          case parsed: Origin.ParsedPartial => {
-            val following = parsed.allInputTokens().iterator.drop(parsed.endTokenIdx)
-              .filterNot(_.isInstanceOf[Token.Trivia])
-            following.nextOption().exists(_.isInstanceOf[Token.Comma]) && following.nextOption().exists {
-              case _: Token.RightParen | _: Token.RightBracket | _: Token.RightBrace => false
-              case _ => true
-            }
-          }
-          case _ => false
-        })
+        while (index < commentTokens.length && commentTokens(index).start < canonical.endOffset) index += 1
+        index < commentTokens.length && commentTokens(index).end <= block.endOffset
       }
       case _ => false
     }
@@ -1095,7 +1081,7 @@ private[csf] object Printer {
       }
 
     private def elseBody(value: Term, indent: Int): Doc = expression(value) match {
-      case _: Term.If => tree(value, indent)
+      case conditional: Term.If if !blockHasFooter(value, conditional) => tree(value, indent)
       case _ => requiredBlock(value, indent)
     }
 
@@ -1272,7 +1258,9 @@ private[csf] object Printer {
       }
       case loop: Term.ForYield => {
         val enumerators = tree(loop.enumsBlock, indent)
-        val body = spaced(loop.body, indent, (value, depth) => inContext(TreeSyntacticGroup.Expr, value, depth))
+        val body = if (blockHasFooter(loop.body, expression(loop.body))) {
+          Doc.space + requiredBlock(loop.body, indent)
+        } else spaced(loop.body, indent, (value, depth) => inContext(TreeSyntacticGroup.Expr, value, depth))
         Doc.text("for ") + enumerators + Doc.text(" yield") + body
       }
       case creation: Term.New => Doc.text("new") + spaced(creation.init, indent)

@@ -19,7 +19,7 @@ enum FormatError(message: String) extends RuntimeException(message) {
 }
 
 object Formatter {
-  private given Dialect = dialects.Scala3
+  private given Dialect = dialects.Scala3.withAllowSignificantIndentation(false)
   private given ParserOptions = ParserOptions.default.withCaptureComments(false)
 
   def format(source: String, columns: Int = 100): Either[FormatError, String] =

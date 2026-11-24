@@ -16,13 +16,12 @@ class CommentLayoutSuite extends FunSuite {
 
   private def format(source: String): String = {
     val result = Formatter.format(source).fold(error => fail(error.getMessage), identity)
-    val original = source.parse[Source].get
-    assertEquals(structure(result.parse[Source].get), structure(original), result)
-    val reparsed = {
+    val (original, reparsed) = {
       given Dialect = dialects.Scala3.withAllowSignificantIndentation(false)
-      result.parse[Source].get
+      (source.parse[Source].get, result.parse[Source].get)
     }
     assertEquals(structure(reparsed), structure(original), result)
+    assertEquals(structure(result.parse[Source].get), structure(original), result)
     val comments = result.tokenize.get.collect { case comment: Token.Comment => comment }.toList
     assertEquals(
       comments.map(_.text),
