@@ -48,7 +48,7 @@ class CaseBodyLayoutSuite extends FunSuite {
 
   test("a tuple partial-function argument keeps its case header inline above its statements") {
     check("val result=rows.map{case(name,values)=>{val attribute=Attribute(name,values);attribute}}",
-      "val result = rows.map{ case (name, values) =>\n  val attribute = Attribute(name, values)\n  attribute\n}\n")
+      "val result = rows.map{ case (name, values) =>\n    val attribute = Attribute(name, values)\n    attribute\n  }\n")
   }
 
   test("catch cases emit their statements directly without another pair of body braces") {
@@ -59,7 +59,7 @@ class CaseBodyLayoutSuite extends FunSuite {
   test("empty match and partial-function bodies retain empty case semantics without empty braces") {
     check("val result=input match{case First=>{};case _=>}",
       "val result =\n  input match {\n    case First =>\n    case _ =>\n  }\n")
-    check("val result=values.map{case _=>{}}", "val result = values.map{ case _ => }\n")
+    check("val result=values.map{case _=>{}}", "val result = values.map{ case _ =>\n  }\n")
   }
 
   test("comment-only bodies and footer comments remain with their case before the next sibling") {

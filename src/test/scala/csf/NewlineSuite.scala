@@ -152,42 +152,48 @@ class NewlineSuite extends FunSuite {
     check(source, expected)
   }
 
-  test("a tuple's attached block comment follows the separator and retained grouping gap") {
+  test("a tuple's attached block comment follows the grouping gap") {
     check("object Example{call();\n\n\n/* Next expression */\n(first,second)}",
-      "object Example {\n  call();\n\n  /* Next expression */\n  (first, second)\n}\n")
+      "object Example {\n  call()\n\n  /* Next expression */\n  (first, second)\n}\n")
   }
 
-  test("a method's separator precedes the bounded gap and the following statement's attached comment") {
+  test("a method and a following tuple comment are separated by one blank line") {
     List(0, 1, 3).foreach { blanks =>
       val gap = "\n" * (blanks + 1)
-      val boundedGap = "\n" * (blanks.min(1) + 1)
       check("object Example{def first=1;" + gap + "/* Next expression */\n(first,second)}",
-        "object Example {\n  def first = 1;" + boundedGap + "  /* Next expression */\n  (first, second)\n}\n")
+        "object Example {\n  def first = 1\n\n  /* Next expression */\n  (first, second)\n}\n")
     }
   }
 
-  test("a unary expression's attached line comment follows the separator and retained grouping gap") {
+  test("a unary expression's attached line comment follows the grouping gap") {
     check("object Example{call();\n\n\n// Next expression\n-value}",
-      "object Example {\n  call();\n\n  // Next expression\n  -value\n}\n")
+      "object Example {\n  call()\n\n  // Next expression\n  -value\n}\n")
   }
 
   test("a unit result after a unit-valued binding needs no separator") {
     val expected = """val d = env.context.commands.addHandler[Unit](
-      |  for {
-      |    _ <- Setup.unit
-      |  } yield { (req, res) =>
-      |    val _ = ()
-      |    ()
-      |  }
-      |)
+      |      for {
+      |        _ <- Setup.unit
+      |      } yield { (req, res) =>
+      |        val _ = ()
+      |        ()
+      |      }
+      |    )
       |""".stripMargin
 
     check(expected, expected)
-    check(expected.replace("val _ = ()\n    ()", "val _ = { () }; { () }"), expected)
+    check(expected.replace("val _ = ()\n        ()", "val _ = { () }; { () }"), expected)
   }
 
-  test("a standalone unit expression keeps its separator after a postfix expression") {
-    check("def run = { f postfix; () }", "def run = {\n  f postfix;\n  ()\n}\n")
+  test("a standalone unit expression follows a completed call with the ordinary gap") {
+    check("def run = { call(); () }", "def run = {\n  call()\n  ()\n}\n")
+    check("def run = { call{ x => x }\n\n// next\n() }",
+      "def run = {\n  call{ x =>\n    x\n  }\n\n  // next\n  ()\n}\n")
+  }
+
+  test("a blank line separates unit from a preceding postfix expression") {
+    check("def run = { f postfix; () }", "def run = {\n  f postfix\n\n  ()\n}\n")
+    check("def run = { val x = f postfix; () }", "def run = {\n  val x = f postfix\n\n  ()\n}\n")
   }
 
   test("standalone comments retain bounded grouping before the attached statement") {

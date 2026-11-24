@@ -61,9 +61,10 @@ class ChainSuite extends FunSuite {
 
   test("terminal braced and parenthesized arguments move below equals before splitting the chain dots") {
     val source = "val x=a.b.d.e.f{y=>work(y);y}"
-    val inline = "val x = a.b.d.e.f{ y =>\n  work(y)\n  y\n}\n"
-    val belowEquals = "val x =\n  a.b.d.e.f{ y =>\n    work(y)\n    y\n  }\n"
-    val dotted = "val x =\n  a\n    .b\n    .d\n    .e\n    .f{ y =>\n      work(y)\n      y\n    }\n"
+    val body = "\n      work(y)\n      y\n    }\n"
+    val inline = "val x = a.b.d.e.f{ y =>" + body
+    val belowEquals = "val x =\n  a.b.d.e.f{ y =>" + body
+    val dotted = "val x =\n  a\n    .b\n    .d\n    .e\n    .f{ y =>" + body
     val inlineWidth = inline.linesIterator.next().length
     val belowEqualsWidth = belowEquals.linesIterator.drop(1).next().length
 
@@ -71,19 +72,16 @@ class ChainSuite extends FunSuite {
     assertEquals(format(source, columns = belowEqualsWidth), belowEquals)
     assertEquals(format(source, columns = belowEqualsWidth - 1), dotted)
     assertEquals(format("val x=a.b[Int](z).d.e.f{y=>work(y);y}"),
-      "val x = a.b[Int](z).d.e.f{ y =>\n  work(y)\n  y\n}\n")
+      "val x = a.b[Int](z).d.e.f{ y =>" + body)
 
-    val curried = "val x=a.b[Int](z).d.e.f(seed)(prepare(left),prepare(right))"
-    val curriedInline = "val x = a.b[Int](z).d.e.f(seed)(\n  prepare(left),\n  prepare(right)\n)\n"
-    val curriedBelowEquals = "val x =\n  a.b[Int](z).d.e.f(seed)(\n    prepare(left),\n    prepare(right)\n  )\n"
-    val curriedDotted = "val x =\n  a\n    .b[Int](z)\n    .d\n    .e\n    .f(seed)(\n" +
-      "      prepare(left),\n      prepare(right)\n    )\n"
-    val curriedInlineWidth = curriedInline.linesIterator.next().length
-    val curriedBelowEqualsWidth = curriedBelowEquals.linesIterator.drop(1).next().length
-
-    assertEquals(format(curried, columns = curriedInlineWidth), curriedInline)
-    assertEquals(format(curried, columns = curriedBelowEqualsWidth), curriedBelowEquals)
-    assertEquals(format(curried, columns = curriedBelowEqualsWidth - 1), curriedDotted)
+    val parenthesized = "val x=a.b.d.e.f(one,two,three)"
+    val args = "\n      one,\n      two,\n      three\n    )\n"
+    val parenInline = "val x = a.b.d.e.f("
+    val parenBelowEquals = "  a.b.d.e.f("
+    assertEquals(format(parenthesized, columns = parenInline.length), parenInline + args)
+    assertEquals(format(parenthesized, columns = parenBelowEquals.length), "val x =\n" + parenBelowEquals + args)
+    assertEquals(format(parenthesized, columns = parenBelowEquals.length - 1),
+      "val x =\n  a\n    .b\n    .d\n    .e\n    .f(" + args)
   }
 
   test("qualified calls keep the opener inline when their arguments wrap") {
@@ -91,33 +89,53 @@ class ChainSuite extends FunSuite {
       "val input = TextInput.register(env.context.commands, env.context.queue, env.context.frees, env.context.pending)"
 
     assertEquals(format(source),
-      "val input = TextInput.register(\n  env.context.commands,\n  env.context.queue,\n" +
-        "  env.context.frees,\n  env.context.pending\n)\n")
+      "val input = TextInput.register(\n    env.context.commands,\n    env.context.queue,\n" +
+        "    env.context.frees,\n    env.context.pending\n  )\n")
     assertEquals(format("val done = env.context.commands.addHandler[Result] { " +
       "for { selectedShip <- GameplayPanels.selectedShip; states <- decl.read[State] } " +
       "yield (request, result) => use(request, result) }"),
       "val done = env.context.commands.addHandler[Result] {\n" +
-        "  for {\n    selectedShip <- GameplayPanels.selectedShip\n    states <- decl.read[State]\n" +
-        "  } yield (request, result) => use(request, result)\n}\n")
+        "      for {\n        selectedShip <- GameplayPanels.selectedShip\n        states <- decl.read[State]\n" +
+        "      } yield (request, result) => use(request, result)\n    }\n")
   }
 
   test("a braced collect statement splits its chain only when the case opener cannot fit") {
     assertEquals(format("object Example{source.values.ready.collect{case Some(x)=>x}}"),
-      "object Example {\n  source.values.ready.collect{ case Some(x) => x }\n}\n")
+      "object Example {\n  source.values.ready.collect{ case Some(x) =>\n      x\n    }\n}\n")
 
     val source = "object Example{source.values.ready.collect{case Some(x)=>{prepare(x);use(x)}}}"
     val header = "  source.values.ready.collect{ case Some(x) =>"
     assertEquals(format(source, columns = header.length),
-      s"object Example {\n$header\n    prepare(x)\n    use(x)\n  }\n}\n")
+      s"object Example {\n$header\n      prepare(x)\n      use(x)\n    }\n}\n")
     assertEquals(format(source, columns = header.length - 1),
       "object Example {\n  source\n    .values\n    .ready\n    .collect{ case Some(x) =>\n" +
         "      prepare(x)\n      use(x)\n    }\n}\n")
   }
 
+  test("a chain resumes at the closing brace while the block body wraps independently") {
+    val source = "object Example{source.values.ready.map{x=>combine(abcdefgh,ijklmnop) // footer\n}.filter(p)}"
+    val result = format(source, columns = 31)
+
+    assertEquals(result,
+      "object Example {\n  source.values.ready.map{ x =>\n" +
+        "      combine(\n        abcdefgh,\n        ijklmnop\n      )\n" +
+        "      // footer\n    }.filter(p)\n}\n")
+    assert(result.linesIterator.forall(_.length <= 31), result)
+    assertEquals(format(source.replace(".filter(p)", ".firstLongFilter().secondOne()"), columns = 31),
+      result.replace("}.filter(p)", "}\n    .firstLongFilter()\n    .secondOne()"))
+    assertEquals(format("val result=source.values.ready.map{x=>use(x)}.size"),
+      "val result = source.values.ready.map{ x =>\n      use(x)\n    }.size\n")
+  }
+
+  test("parentheses around a partial function allow the call to stay inline") {
+    assertEquals(format("object Example{source.values.ready.collect({case Some(x)=>x})}"),
+      "object Example {\n  source.values.ready.collect({ case Some(x) => x })\n}\n")
+  }
+
   test("a yield lambda body keeps its terminal braced call opener together") {
     assertEquals(format("val result=for{item<-values}yield x=>x.context.ships.foreach{ship=>prepare(ship);use(ship)}"),
       "val result =\n  for {\n    item <- values\n  } yield x =>\n" +
-        "    x.context.ships.foreach{ ship =>\n      prepare(ship)\n      use(ship)\n    }\n")
+        "    x.context.ships.foreach{ ship =>\n        prepare(ship)\n        use(ship)\n      }\n")
   }
 
   test("overflowing parameterless chains use one shared continuation indent") {
@@ -130,37 +148,37 @@ class ChainSuite extends FunSuite {
     val firstType = "LongType" * 5
     val secondType = "OtherType" * 4
     assertEquals(format(s"val result=service.load[$firstType](id)(ctx).map[$secondType](f).value"),
-      s"val result =\n  service\n    .load[$firstType](id)(ctx)\n    .map[$secondType](f)\n    .value\n")
+      s"val result = service.load[$firstType](id)(ctx)\n    .map[$secondType](f).value\n")
   }
 
-  test("mandatory multiline lambda arguments split every dot even when their footer would fit 100 columns") {
+  test("selectors can share the closing line of a multiline lambda argument") {
     val first = "a" * 50
     val second = "b" * 39
-    val expected = "val result =\n  values\n    .map(\n      x =>\n        {\n          prepare(x)\n          x\n        }\n" +
-      s"    )\n    .$first()\n    .$second()\n"
+    val expected = "val result = values.map(\n      x =>\n        {\n          prepare(x)\n          x\n        }\n" +
+      s"    ).$first().$second()\n"
 
     assertEquals(s"    ).$first().$second()".length, 100)
     assertEquals(format(s"val result=values.map(x=>{prepare(x);x}).$first().$second()"), expected)
   }
 
-  test("mandatory multiline block arguments split every dot even when their footer would fit") {
+  test("selectors can share the closing line of a multiline block argument") {
     val first = "a" * 50
     val second = "b" * 39
-    val expected = "val result =\n  service\n    .run(\n      {\n        prepare()\n        value\n      }\n    )\n" +
-      s"    .$first()\n    .$second()\n"
+    val expected = "val result = service.run(\n      {\n        prepare()\n        value\n      }\n" +
+      s"    ).$first().$second()\n"
 
     assertEquals(s"    ).$first().$second()".length, 100)
     assertEquals(format(s"val result=service.run({prepare();value}).$first().$second()"), expected)
   }
 
-  test("lambda body calls wrapping at soft argument breaks split the enclosing chain dots") {
+  test("lambda body calls wrap their arguments independently of the enclosing chain") {
     val first = "first" + "Argument" * 5
     val second = "second" + "Argument" * 5
     val result = format(s"val result=values.map(x=>combine($first,$second)).filter(p)")
 
-    assert(result.startsWith("val result =\n  values\n    .map(\n      x =>\n"), result)
+    assert(result.startsWith("val result = values.map(\n      x =>\n"), result)
     assert(result.contains("combine(\n"), result)
-    assert(result.endsWith("\n    )\n    .filter(p)\n"), result)
+    assert(result.endsWith("\n    ).filter(p)\n"), result)
     assert(result.linesIterator.forall(_.length <= 100), result)
   }
 
@@ -210,15 +228,13 @@ class ChainSuite extends FunSuite {
       "val result = TemplatingDB.getMailGenContentHxl(o, id).flatMapF(R.fromOption(UpsertError.MailContentNotFound(id))(_))\n")
   }
 
-  test("the wrapped Sales mail-content call aligns its closing parenthesis with the method step") {
+  test("the wrapped Sales mail-content argument uses the fixed continuation indent") {
     val expression = "TemplatingDB.getMailGenContentHxl(o,id).flatMapF(R.fromOption(UpsertError.MailContentNotFound(id))(_))"
     val source = "object A{" * 7 + expression + "}" * 7
     val opening = (0 until 7).map(depth => "  " * depth + "object A {").mkString("\n") + "\n"
     val closing = (0 until 7).reverse.map(depth => "  " * depth + "}").mkString("\n") + "\n"
     val expected = opening +
-      "              TemplatingDB\n" +
-      "                .getMailGenContentHxl(o, id)\n" +
-      "                .flatMapF(\n" +
+      "              TemplatingDB.getMailGenContentHxl(o, id).flatMapF(\n" +
       "                  R.fromOption(UpsertError.MailContentNotFound(id))(_)\n" +
       "                )\n" + closing
     val result = format(source, columns = 78)

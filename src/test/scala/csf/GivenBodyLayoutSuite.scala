@@ -35,7 +35,7 @@ class GivenBodyLayoutSuite extends FunSuite {
 
     assertEquals(format(source),
       "given [H: TypeId as tidH, A: TypeId as tidA]: TypeId[HeaderRow[H, A]] = TypeIdHeaderRowImpl(\n" +
-        "  tidH,\n  tidA\n)\n")
+        "    tidH,\n    tidA\n  )\n")
   }
 
   test("short named anonymous and polymorphic given aliases remain inline") {

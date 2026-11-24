@@ -18,21 +18,11 @@ private[csf] object Printer {
   private val softCloseBrace = Doc.line + Doc.char('}')
   private val emptyParentheses = Doc.empty.tightBracketBy(Doc.char('('), Doc.char(')'))
 
-  private enum BodyExprDoc {
-    case Direct(doc: Doc)
-    case Prio(header: Doc, call: CallLayout)
-  }
+  private final case class ExprDoc(body: Doc, tail: Option[Doc] = None) {
+    def doc: Doc = body + tail.getOrElse(Doc.empty)
 
-  private final case class CallLayout(leading: Doc, callee: Doc, flat: Option[(Doc, Int)], dotIndent: Int,
-      scope: Int => Doc) {
-    def fittingCallee(remaining: => Int): Option[Doc] = flat.collect {
-      case (doc, width) if width <= remaining => doc
-    }
-
-    def render(indent: Int, fitting: Option[Doc]): Doc = {
-      val offset = if (fitting.isDefined) 0 else dotIndent
-      leading + fitting.getOrElse(callee) + scope(indent + offset).nested(offset)
-    }
+    def nested(amount: Int): ExprDoc =
+      if (amount == 0) this else ExprDoc(body.nested(amount), tail.map(_.nested(amount)))
   }
 
   private enum InfixWork {
@@ -100,113 +90,57 @@ private[csf] object Printer {
       case _ => value
     }
 
-    private def arrowTail(indent: Int)(body: => Doc): Doc = {
+    private def arrowTail(indent: Int)(body: => Doc): Doc =
+      expressionTail(indent)(ExprDoc(body))
+
+    private def expressionTail(indent: Int, leading: Doc = Doc.empty)(body: => ExprDoc): Doc = {
       val before = hardLineCount
       val beforeComments = commentIndex
-      val contents = body
-      val multiline = hardLineCount != before ||
-        (commentIndex > beforeComments && commentTokens(commentIndex - 1).text.startsWith("//"))
-      if (contents.isEmpty) Doc.empty
-      else if (multiline) (hardLine + contents).nested(indent)
-      else (Doc.line + contents).nested(indent).grouped
+      val expr = body
+      val first = leading + expr.body
+      expr.tail match {
+        case Some(tail) =>
+          val separator = if (leading.isEmpty) Doc.line else hardLine
+          ((separator + first).grouped + tail).nested(indent)
+        case None =>
+          val multiline = leading.nonEmpty || hardLineCount != before ||
+            (commentIndex > beforeComments && commentTokens(commentIndex - 1).text.startsWith("//"))
+          if (first.isEmpty) Doc.empty
+          else if (multiline) (hardLine + first).nested(indent)
+          else (Doc.line + first).nested(indent).grouped
+      }
     }
 
-    private def assignmentBody(value: Tree, indent: Int, allowBreak: Boolean = true,
-        header: Option[Doc] = None): Doc = {
-      import BodyExprDoc.*
-      val body = if (!allowBreak) Direct(namedAssignmentBody(value, indent)) else value match {
-        case block: Term.Block if argumentBlock(block) => Direct(argumentAssignmentBody(block, indent))
+    private def assignmentBody(value: Tree, indent: Int, allowBreak: Boolean = true): Doc = {
+      val body = if (!allowBreak) namedAssignmentBody(value, indent) else value match {
+        case block: Term.Block if argumentBlock(block) => argumentAssignmentBody(block, indent)
         case term: Term => {
           val canonical = expression(term)
           canonical match {
-            case _: Term.Block => Direct(Doc.space + requiredBlock(term, indent, compactEmpty = false))
-            case _ if bracedLambda(canonical) => Direct(Doc.space + tree(term, indent))
+            case _: Term.Block => Doc.space + requiredBlock(term, indent, compactEmpty = false)
+            case _ if bracedLambda(canonical) => Doc.space + tree(term, indent)
             case _ if rhsCommentNeedsBlock(term, canonical) =>
-              Direct(Doc.space + requiredBlock(term, indent, compactEmpty = false))
-            case _: Term.PartialFunction => Direct(Doc.space + tree(term, indent))
-            case call: Term.Apply =>
-              header.flatMap(declaration => prioritizedCall(term, call, indent + 2).map(Prio(declaration, _))).getOrElse {
-                Direct(arrowTail(2)(tree(term, indent + 2, lineStart = true)))
+              Doc.space + requiredBlock(term, indent, compactEmpty = false)
+            case _: Term.PartialFunction => Doc.space + tree(term, indent)
+            case call: (Term.Apply | Term.ApplyType | Term.Select) =>
+              val leading = leadingComments(term, indent + 2, lineStart = true)
+              expressionTail(2, leading) {
+                val expr = chain(call, indent + 2)
+                val footer = tokenComments(term, term.endOffset, indent + 2)
+                if (footer.isEmpty) expr
+                else expr.tail match {
+                  case Some(tail) => expr.copy(tail = Some(tail + hardLine + footer))
+                  case None => ExprDoc(expr.body + hardLine + footer)
+                }
               }
-            case _ => Direct(arrowTail(2)(tree(term, indent + 2, lineStart = true)))
+            case _ => arrowTail(2)(tree(term, indent + 2, lineStart = true))
           }
         }
-        case _: Ctor.Block => Direct(Doc.space + tree(value, indent))
-        case refinement: Type.Refine if refinement.tpe.isEmpty => Direct(Doc.space + tree(value, indent))
-        case _ => Direct(arrowTail(2)(tree(value, indent + 2, lineStart = true)))
+        case _: Ctor.Block => Doc.space + tree(value, indent)
+        case refinement: Type.Refine if refinement.tpe.isEmpty => Doc.space + tree(value, indent)
+        case _ => arrowTail(2)(tree(value, indent + 2, lineStart = true))
       }
-      assignmentSeparator + (body match {
-        case Direct(doc) => doc
-        case Prio(header, call) =>
-          val inline = if (call.leading.isEmpty) {
-            call.fittingCallee(options.columns - assignmentHeaderWidth(header, indent) - 1)
-          } else None
-          val rhsOffset = if (inline.isDefined) 0 else 2
-          val rhsIndent = indent + rhsOffset
-          val contents = call.render(rhsIndent, inline.orElse(call.fittingCallee(options.columns - rhsIndent)))
-          val footer = tokenComments(value, value.endOffset, rhsIndent)
-          val start = if (rhsOffset == 0) Doc.space else hardLine
-          (start + contents + (if (footer.isEmpty) Doc.empty else hardLine + footer)).nested(rhsOffset)
-      })
-    }
-
-    private def expressionLine(value: Tree, indent: Int): Doc = value match {
-      case call: Term.Apply if bracedCall(call.argClause) =>
-        prioritizedCall(call, call, indent).fold(tree(value, indent, lineStart = true)) { layout =>
-          layout.render(indent, layout.fittingCallee(options.columns - indent))
-        }
-      case _ => tree(value, indent, lineStart = true)
-    }
-
-    private def prioritizedCall(term: Term, call: Term.Apply, indent: Int): Option[CallLayout] = {
-      val arguments = call.argClause
-      val braced = arguments.values.headOption.filter(_ => bracedCall(arguments)).filter {
-        case block: Term.Block => block.stats.nonEmpty
-        case _ => true
-      }
-      val opener = braced.map(argument => bracedArgumentSpace(argument) + Doc.char('{')).orElse {
-        Option.when(arguments.values.nonEmpty && openingToken(arguments).exists(_.isInstanceOf[Token.LeftParen]))(
-          Doc.char('('))
-      }
-      opener.map { scopeOpening =>
-        val leading = leadingComments(term, indent, lineStart = true)
-        val before = hardLineCount
-        val (callee, dotIndent) = chainParts(call.fun, indent)
-        val headerIndent = indent + dotIndent + 2
-        val beforeHeader = hardLineCount
-        val arrow = braced.flatMap {
-          case Term.Block(List(function: (Term.FunctionTerm | Term.PolyFunction))) if bracedLambda(function) =>
-            Some((bracedArrowHead(lambdaHeader(function, headerIndent)),
-              (depth: Int) => lambdaStatements(function, function.body, depth)))
-          case function: Term.PartialFunction =>
-            inlineArgumentCase(function).map { branch =>
-              (bracedArrowHead(caseHeader(branch, headerIndent) + arrowSuffix),
-                (depth: Int) => caseContents(branch, depth))
-            }
-          case _ => None
-        }
-        val scope = arrow match {
-          case Some((head, bodyAt)) =>
-            val multilineHeader = hardLineCount != beforeHeader
-            (depth: Int) => {
-              val body = closeArrowArgument(head + arrowTail(2)(bodyAt(depth + 2)), multiline = multilineHeader)
-              val remaining = tokenComments(arguments, arguments.endOffset, depth)
-              body + (if (remaining.isEmpty) Doc.empty else hardLine + remaining + hardLine)
-            }
-          case None => (depth: Int) => tree(arguments, depth)
-        }
-        val flat = Option.when(hardLineCount == before) {
-          val doc = callee.flatten
-          val preview = doc + arrow.fold(scopeOpening)(_._1.flatten)
-          (doc, preview.maxWidth)
-        }
-        CallLayout(leading, callee, flat, dotIndent, scope)
-      }
-    }
-
-    private def assignmentHeaderWidth(header: Doc, indent: Int): Int = {
-      val prefix = (Doc.spaces(indent) + (header + assignmentSeparator).nested(indent)).render(options.columns)
-      prefix.length - prefix.lastIndexOf('\n') - 1
+      assignmentSeparator + body
     }
 
     private def argumentAssignmentBody(block: Term.Block, indent: Int): Doc = {
@@ -268,10 +202,10 @@ private[csf] object Printer {
       case _ => false
     }
 
-    private def closeArrowArgument(body: => Doc, multiline: Boolean = false): Doc = {
+    private def closeArrowArgument(body: => Doc): Doc = {
       val before = hardLineCount
       val contents = body
-      if (multiline || hardLineCount != before) contents + hardLine + Doc.char('}')
+      if (hardLineCount != before) contents + hardLine + Doc.char('}')
       else (contents + softCloseBrace).grouped
     }
 
@@ -421,8 +355,8 @@ private[csf] object Printer {
       if (separate && commentIndex > start) result + hardLine else result
     }
 
-    private def statementGap(previousLine: Int, nextLine: Int, indent: Int): Doc = {
-      if (nextLine > previousLine + 1) hardLine.nested(-indent) + hardLine
+    private def statementGap(previousLine: Int, nextLine: Int, indent: Int, forceBlank: Boolean = false): Doc = {
+      if (forceBlank || nextLine > previousLine + 1) hardLine.nested(-indent) + hardLine
       else hardLine
     }
 
@@ -474,57 +408,37 @@ private[csf] object Printer {
         container: Tree,
         values: Iterable[Tree],
         indent: Int,
-        emit: (Tree, Int) => Doc = expressionLine,
+        emit: (Tree, Int) => Doc = tree(_, _, lineStart = true),
     ): Doc = {
       val docs = ArrayBuffer.empty[Doc]
       val iterator = values.iterator.buffered
       var previousLine = -1
-      var boundaryComments = false
+      var blankBefore = false
       while (iterator.hasNext) {
         val value = iterator.next()
-        val firstLine = firstCommentLine(value.begOffset).getOrElse(value.pos.startLine)
-        val before = comments(value.begOffset, indent, separate = true)
-        val beforeBodyComments = commentIndex
+        val startLine = value.pos.startLine
+        val firstLine = firstCommentLine(value.begOffset).getOrElse(startLine)
+        val before = comments(value.begOffset, indent)
+        val hasComments = before.nonEmpty
+        // A normalized block footer can become a leading comment on reparse.
+        val blankAfterComments = blankBefore && hasComments && firstLine <= previousLine + 1 &&
+          startLine > commentTokens(commentIndex - 1).pos.endLine + 1
+        val leading = if (!hasComments) Doc.empty
+        else before + (if (blankAfterComments) hardLine.nested(-indent) + hardLine else hardLine)
         val body = value match {
           case function: Term.FunctionLike if iterator.hasNext && argumentClause(function).nonEmpty =>
             parenthesized(emit(function, indent + 2))
           case _ => emit(value, indent)
         }
-        val afterBodyComments = commentIndex
         val gap = if (previousLine < 0) Doc.empty
-        else if (boundaryComments) hardLine
-        else statementGap(previousLine, firstLine, indent)
-        val needsSeparator = iterator.hasNext && ((value, iterator.head) match {
-          case (definition: Defn.Val, next: Term)
-              if expression(next).isInstanceOf[Lit.Unit] && expression(definition.rhs).isInstanceOf[Lit.Unit] => false
-          case (_, next) => continuesPreviousStatement(next)
-        })
-        val semicolon = value.origin match {
-          case parsed: Origin.ParsedPartial if needsSeparator =>
-            parsed.allInputTokens().findNot(_.isInstanceOf[Token.Trivia], parsed.endTokenIdx, Int.MaxValue)
-              .collect { case token: Token.Semicolon => token }
-          case _ => None
-        }
-        val endLine = semicolon.fold(value.pos.endLine)(_.pos.endLine)
-        val following = if (needsSeparator) comments(iterator.head.begOffset, indent) else Doc.empty
-        val followingLeading = following.nonEmpty && semicolon.forall(_.start < commentTokens(afterBodyComments).start)
-        val followingGap = if (followingLeading) {
-          statementGap(endLine, commentTokens(afterBodyComments).pos.startLine, indent)
-        } else if (following.isEmpty) Doc.empty else hardLine
-        val separator = if (!needsSeparator) Doc.empty
-        else if (afterBodyComments > beforeBodyComments || (following.nonEmpty && !followingLeading)) {
-          hardLine + Doc.char(';')
-        } else Doc.char(';')
+        else statementGap(previousLine, firstLine, indent, forceBlank = blankBefore && !blankAfterComments)
         if (gap.nonEmpty) docs += gap
-        if (before.nonEmpty) docs += before
+        if (leading.nonEmpty) docs += leading
         if (body.nonEmpty) docs += body
-        if (followingLeading && separator.nonEmpty) docs += separator
-        if (followingGap.nonEmpty) docs += followingGap
-        if (following.nonEmpty) docs += following
-        if (!followingLeading && separator.nonEmpty) docs += separator
+        val endLine = value.pos.endLine
         previousLine = if (commentIndex == 0) endLine
         else endLine.max(commentTokens(commentIndex - 1).pos.endLine)
-        boundaryComments = followingLeading
+        blankBefore = iterator.hasNext && needsBlankLine(value, iterator.head)
       }
       val remaining = tokenComments(container, container.endOffset, indent)
       val gap = if (previousLine < 0) Doc.empty
@@ -532,6 +446,15 @@ private[csf] object Printer {
       if (gap.nonEmpty) docs += gap
       if (remaining.nonEmpty) docs += remaining
       Doc.cat(docs)
+    }
+
+    private def needsBlankLine(previous: Tree, next: Tree): Boolean = next match {
+      case term: Term if expression(term).isInstanceOf[Lit.Unit] => previous match {
+        case term: Term => !expression(term).isInstanceOf[Term.Apply]
+        case definition: Defn.Val => !expression(definition.rhs).isInstanceOf[Lit.Unit]
+        case _ => true
+      }
+      case _ => continuesPreviousStatement(next)
     }
 
     private def continuesPreviousStatement(value: Tree): Boolean = value match {
@@ -587,7 +510,7 @@ private[csf] object Printer {
       case block: Term.Block if !(expression(block) eq block) =>
         statements(block, block.stats, indent, blockContents)
       case block: Term.Block => statements(block, block.stats, indent)
-      case _ => expressionLine(value, indent)
+      case _ => tree(value, indent, lineStart = true)
     }
 
     private def requiredBlock(value: Term, indent: Int, compactEmpty: Boolean = true): Doc =
@@ -731,13 +654,29 @@ private[csf] object Printer {
       case _ => true
     }
 
-    private def chain(value: Term, indent: Int): Doc = {
-      val before = hardLineCount
-      val (doc, dotIndent) = chainParts(value, indent)
-      if (dotIndent != 0 && hardLineCount == before) doc.grouped else doc
+    private def chain(value: Term, indent: Int): ExprDoc = {
+      val (head, elements) = chainParts(value, indent)
+      val docs = ArrayBuffer.empty[Doc]
+      var prefix = head
+      var run = Doc.empty
+
+      def finishRun(): Unit = {
+        docs += prefix + run.grouped
+        run = Doc.empty
+      }
+
+      elements.foreach {
+        case ExprDoc(body, None) => run = run + body
+        case ExprDoc(body, Some(tail)) =>
+          finishRun()
+          docs += body
+          prefix = tail
+      }
+      finishRun()
+      ExprDoc(docs.head, Option.when(docs.size > 1)(Doc.cat(docs.iterator.drop(1).toVector)))
     }
 
-    private def chainParts(value: Term, indent: Int): (Doc, Int) = {
+    private def chainParts(value: Term, indent: Int): (Doc, Vector[ExprDoc]) = {
       val suffixes = ArrayBuffer.empty[Term]
       var base = value
       var selections = 0
@@ -760,35 +699,31 @@ private[csf] object Printer {
       }
       val breakable = selections >= 2 && expressionChain(value)
       val baseDoc = suffixes.lastOption match {
-          case Some(_: Term.Select) => selectQualifier(base, indent)
-          case _ => atom(base, indent)
+        case Some(_: Term.Select) => selectQualifier(base, indent)
+        case _ => atom(base, indent)
       }
-      var prefix = baseDoc
-      var continuation = Doc.empty
-      var selected = false
+      val elements = Vector.newBuilder[ExprDoc]
+      var tailIndent = 0
       var index = suffixes.length - 1
       while (index >= 0) {
         val suffix = suffixes(index)
-        val suffixIndent = if (breakable && (selected || suffix.isInstanceOf[Term.Select])) indent + 2 else indent
-        val doc = suffix match {
+        if (breakable && suffix.isInstanceOf[Term.Select]) tailIndent = 2
+        val suffixIndent = indent + tailIndent
+        suffix match {
           case select: Term.Select =>
-            selected = true
-            val commentStart = commentIndex
             val leading = comments(select.name.begOffset, suffixIndent)
-            val commented = commentIndex > commentStart
             val name = tree(select.name, suffixIndent)
-            (if (commented) hardLine else if (breakable) Doc.lineBreak else Doc.empty) +
-              leading + (if (commented) hardLine else Doc.empty) + Doc.char('.') + name
-          case call: Term.Apply => tree(call.argClause, suffixIndent)
-          case call: Term.ApplyType => tree(call.targClause, suffixIndent)
+            val separator = if (leading.nonEmpty) hardLine + leading + hardLine
+            else if (breakable) Doc.lineBreak else Doc.empty
+            elements += ExprDoc(separator + Doc.char('.') + name).nested(tailIndent)
+          case call: Term.Apply =>
+            elements ++= argumentParts(call.argClause, suffixIndent).map(_.nested(tailIndent))
+          case call: Term.ApplyType => elements += ExprDoc(tree(call.targClause, suffixIndent)).nested(tailIndent)
           case _ => throw FormatError.Unsupported(suffix.productPrefix)
         }
-        if (breakable && selected) continuation = continuation + doc
-        else prefix = prefix + doc
         index -= 1
       }
-      val result = if (continuation.isEmpty) prefix else prefix + continuation.nested(2)
-      (result, if (breakable) 2 else 0)
+      (baseDoc, elements.result())
     }
 
     private def infixOperand(outer: Member.Infix, inner: Tree, indent: Int): Doc = {
@@ -927,6 +862,38 @@ private[csf] object Printer {
       case _ => Doc.space
     }
 
+    private def argumentParts(arguments: Term.ArgClause, indent: Int): Vector[ExprDoc] = {
+      if (bracedCall(arguments)) {
+        val argument = arguments.values.head
+        val (head, body) = argument match {
+          case Term.Block(List(function: (Term.FunctionTerm | Term.PolyFunction))) =>
+            val header = bracedArrowHead(lambdaHeader(function, indent + 2))
+            (header, lambdaStatements(function, function.body, indent + 2))
+          case Term.Block(List(function: Term.AnonymousFunction)) =>
+            (Doc.char('{'), lambdaStatements(function, function.body, indent + 2))
+          case block: Term.Block =>
+            (Doc.char('{'), statements(block, block.stats, indent + 2))
+          case function: Term.PartialFunction => inlineArgumentCase(function) match {
+            case Some(branch) =>
+              val header = bracedArrowHead(caseHeader(branch, indent + 2) + arrowSuffix)
+              (header, caseContents(branch, indent + 2))
+            case None => (Doc.char('{'), statements(function, function.cases, indent + 2))
+          }
+          case _ => throw FormatError.Unsupported(argument.productPrefix)
+        }
+        val footer = tokenComments(arguments, arguments.endOffset, indent + 2)
+        val contents = if (footer.isEmpty) body else if (body.isEmpty) footer else body + hardLine + footer
+        val block = if (contents.isEmpty) Doc.empty else (hardLine + contents).nested(2)
+        Vector(ExprDoc(bracedArgumentSpace(argument) + head), ExprDoc(block, Some(hardLine + Doc.char('}'))))
+      } else if (arguments.values.isEmpty && arguments.mod.isEmpty && firstCommentLine(arguments.endOffset).isEmpty) {
+        Vector(ExprDoc(emptyParentheses))
+      } else {
+        val block = clause(arguments, arguments.values, "(", "", indent,
+          arguments.mod.fold(Doc.empty)(mod => tree(mod, indent + 2, lineStart = true)))
+        Vector(ExprDoc(block, Some(Doc.char(')'))))
+      }
+    }
+
     private def parenthesizedInfixArgument(arguments: Term.ArgClause, value: Term): Boolean =
       arguments.begOffset < value.begOffset && openingToken(arguments).exists(_.isInstanceOf[Token.LeftParen])
 
@@ -987,7 +954,7 @@ private[csf] object Printer {
     private def lambdaBody(function: Term.FunctionLike, indent: Int): Doc = function.body match {
       case block: Term.Block if !argumentBlock(block) && insideArgumentBraces(function) =>
         blockContents(block, indent)
-      case body => expressionLine(body, indent)
+      case body => tree(body, indent, lineStart = true)
     }
 
     @annotation.tailrec
@@ -1183,9 +1150,7 @@ private[csf] object Printer {
         statements(block, block.stats, indent, (value, depth) => tree(value, depth, lineStart = true))
       case block: Term.Block if caseBodyBlock(block) => statements(block, block.stats, indent)
       case block: Term.Block => braces(statements(block, block.stats, indent + 2))
-      case call: Term.Apply => chain(call, indent)
-      case call: Term.ApplyType => chain(call, indent)
-      case select: Term.Select => chain(select, indent)
+      case call: (Term.Apply | Term.ApplyType | Term.Select) => chain(call, indent).doc
       case call: Term.ApplyInfix => infix(call, indent)
       case unary: Term.ApplyUnary => {
         val op = tree(unary.op, indent)
@@ -1451,6 +1416,7 @@ private[csf] object Printer {
       case block: Type.Block => {
         val definitions = block.typeDefs.iterator.map(tree(_, indent)).toVector
         val result = tree(block.tpe, indent)
+        // Newlines inside quoted type brackets cannot separate these aliases.
         Doc.intercalate(Doc.text("; "), definitions :+ result)
       }
       case capturing: Type.Capturing => {
@@ -1577,13 +1543,13 @@ private[csf] object Printer {
         val patterns = definition.pats.iterator.map(spaced(_, indent)).toVector
         val tpe = definition.decltpe.map(value => Doc.char(':') + spaced(value, indent))
         val header = mods + Doc.text("val") + Doc.intercalate(Doc.comma, patterns) + tpe.getOrElse(Doc.empty)
-        header + assignmentBody(definition.rhs, indent, header = Some(header))
+        header + assignmentBody(definition.rhs, indent)
       }
       case definition: Defn.Def => {
         val mods = modifiers(definition.mods, indent)
         val signature = methodSignature(definition.name, definition.paramClauseGroups, definition.decltpe, indent)
         val header = mods + Doc.text("def") + signature
-        header + assignmentBody(definition.body, indent, header = Some(header))
+        header + assignmentBody(definition.body, indent)
       }
       case group: Member.ParamClauseGroup => {
         val types = tree(group.tparamClause, indent)
@@ -1629,18 +1595,7 @@ private[csf] object Printer {
         mods + name + tpe.getOrElse(Doc.empty) + default.getOrElse(Doc.empty)
       }
       case arguments: Term.ArgClause =>
-        arguments.values match {
-          case single :: Nil if bracedCall(arguments) => {
-              val body = tree(single, indent)
-              val remaining = tokenComments(arguments, arguments.endOffset, indent)
-              bracedArgumentSpace(single) + body +
-              (if (remaining.isEmpty) Doc.empty else hardLine + remaining + hardLine)
-            }
-          case _ => {
-            clause(arguments, arguments.values, "(", ")", indent,
-              arguments.mod.fold(Doc.empty)(mod => tree(mod, indent + 2, lineStart = true)))
-          }
-        }
+        Doc.cat(argumentParts(arguments, indent).map(_.doc))
       case arguments: Type.ArgClause => clause(arguments, arguments.values, "[", "]", indent)
       case cases: Term.CasesBlock => braces(statements(cases, cases.cases, indent + 2))
       case branch: Case => {
@@ -1731,7 +1686,7 @@ private[csf] object Printer {
       case definition: Defn.GivenAlias => {
         val signature = givenSignature(definition.mods, definition.name, definition.paramClauseGroups,
           definition.decltpe, indent)
-        signature + assignmentBody(definition.body, indent, header = Some(signature))
+        signature + assignmentBody(definition.body, indent)
       }
       case definition: Defn.ExtensionGroup => {
         val parameters = definition.paramClauseGroup.map(tree(_, indent))
@@ -1755,7 +1710,7 @@ private[csf] object Printer {
         val patterns = definition.pats.iterator.map(spaced(_, indent)).toVector
         val result = definition.decltpe.map(value => Doc.char(':') + spaced(value, indent))
         val header = mods + Doc.text("var") + Doc.intercalate(Doc.comma, patterns) + result.getOrElse(Doc.empty)
-        header + assignmentBody(definition.body, indent, header = Some(header))
+        header + assignmentBody(definition.body, indent)
       }
       case declaration: (Decl.Val | Decl.Var) => {
         val mods = modifiers(declaration.mods, indent)

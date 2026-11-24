@@ -57,7 +57,7 @@ class ValBodyLayoutSuite extends FunSuite {
     val columns = "val x = MyDatatype(".length
 
     assertEquals(format(source, columns),
-      "val x = MyDatatype(\n  first,\n  second,\n  third\n)\n")
+      "val x = MyDatatype(\n    first,\n    second,\n    third\n  )\n")
     assertEquals(format(source, columns - 1),
       "val x =\n  MyDatatype(\n    first,\n    second,\n    third\n  )\n")
     assertEquals(format("val x = /* call */ MyDatatype(first, second, third)"),

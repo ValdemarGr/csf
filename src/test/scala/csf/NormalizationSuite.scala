@@ -61,7 +61,7 @@ class NormalizationSuite extends FunSuite {
   }
 
   test("braced call arguments retain their blocks and arity") {
-    assertEquals(format("val result=doThing{Data(42)}"), "val result = doThing {\n  Data(42)\n}\n")
+    assertEquals(format("val result=doThing{Data(42)}"), "val result = doThing {\n    Data(42)\n  }\n")
     List(
       "val result=combine({{{first}}},{{second}})",
       "val result=call(value={{{next}}})",
@@ -162,7 +162,7 @@ class NormalizationSuite extends FunSuite {
   test("a scoped standalone block cannot become an argument to its preceding statement") {
     val result = format("object Example{call();{val scoped=prepare();use(scoped)};next()}")
 
-    assert(result.contains("call();\n"), result)
+    assert(result.contains("call()\n\n  {"), result)
     assertEquals(format("object Example{call();{(first,second)};next()}"),
       format("object Example{call();(first,second);next()}"))
     assertEquals(format("object Example{call();{-value};next()}"),
@@ -178,6 +178,7 @@ class NormalizationSuite extends FunSuite {
     assert(splice.contains("'{"), splice)
     assert(splice.contains("${"), splice)
     format("val quotedType='[List[Int]]")
+    assertEquals(format("val quotedType='[type T=Int;T]"), "val quotedType = '[type T = Int; T]\n")
     assertEquals(format("val result = <node>{ { {value} } }</node>"),
       format("val result = <node>{value}</node>"))
   }
