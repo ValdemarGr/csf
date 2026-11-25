@@ -63,7 +63,7 @@ class AssignmentBodyLayoutSuite extends FunSuite {
 
   test("named call and tuple arguments retain block braces before their separating comma") {
     assertEquals(format("val result=call(value={prepare();next},other=2)"),
-      "val result = call(\n    value = {\n      prepare()\n      next\n    },\n    other = 2\n  )\n")
+      "val result = call(\n  value = {\n    prepare()\n    next\n  },\n  other = 2\n)\n")
     assertEquals(format("val result=(name={prepare();value},count=1)"),
       "val result =\n  (\n    name = {\n      prepare()\n      value\n    },\n    count = 1\n  )\n")
   }
@@ -78,8 +78,8 @@ class AssignmentBodyLayoutSuite extends FunSuite {
 
   test("named argument and default footer comments cannot swallow their following comma") {
     assertEquals(format("val result=call(value=/* before */next,other=after)"),
-      "val result = call(\n    value =\n      /* before */\n      next,\n    other = after\n  )\n")
-    val namedExpected = "val result = call(\n    value = {\n      next\n      // footer\n    },\n    other = after\n  )\n"
+      "val result = call(\n  value =\n    /* before */\n    next,\n  other = after\n)\n")
+    val namedExpected = "val result = call(\n  value = {\n    next\n    // footer\n  },\n  other = after\n)\n"
     List(
       "val result=call(value={next // footer\n},other=after)",
       "val result=call(value=({next // footer\n}),other=after)",
@@ -95,7 +95,7 @@ class AssignmentBodyLayoutSuite extends FunSuite {
     ).foreach { source =>
       assertEquals(format(source), defaultExpected)
     }
-    val singleNamedExpected = "val result = call(\n    value = {\n      next\n      // footer\n    }\n  )\n"
+    val singleNamedExpected = "val result = call(\n  value = {\n    next\n    // footer\n  }\n)\n"
     List(
       "val result=call(value={next // footer\n})",
       "val result=call(value={next // footer\n},\n)",

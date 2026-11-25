@@ -25,6 +25,8 @@ private[csf] object Printer {
       if (amount == 0) this else ExprDoc(body.nested(amount), tail.map(_.nested(amount)))
   }
 
+  private final case class Chain(base: Term, suffixes: Vector[Term], breakable: Boolean)
+
   private enum InfixWork {
     case Visit(value: Term, indent: Int, chained: Boolean)
     case Operand(outer: Term.ApplyInfix, value: Term, indent: Int)
@@ -124,15 +126,26 @@ private[csf] object Printer {
             case _: Term.PartialFunction => Doc.space + tree(term, indent)
             case call: (Term.Apply | Term.ApplyType | Term.Select) =>
               val leading = leadingComments(term, indent + 2, lineStart = true)
-              expressionTail(2, leading) {
-                val expr = chain(call, indent + 2)
-                val footer = tokenComments(term, term.endOffset, indent + 2)
+              val parts = chainStructure(call)
+              val inlineCall = leading.isEmpty && parts.suffixes.exists {
+                case step: Term.Apply =>
+                  val args = step.argClause
+                  args.values.nonEmpty || args.mod.nonEmpty ||
+                    (firstCommentLine(args.endOffset).nonEmpty && args.tokens.exists(_.isInstanceOf[Token.Comment]))
+                case _ => false
+              }
+              val depth = if (inlineCall) indent else indent + 2
+              def emitCall(): ExprDoc = {
+                val expr = chain(parts, depth)
+                val footer = tokenComments(term, term.endOffset, depth)
                 if (footer.isEmpty) expr
                 else expr.tail match {
                   case Some(tail) => expr.copy(tail = Some(tail + hardLine + footer))
                   case None => ExprDoc(expr.body + hardLine + footer)
                 }
               }
+              if (inlineCall) Doc.space + emitCall().doc
+              else expressionTail(2, leading)(emitCall())
             case _ => arrowTail(2)(tree(term, indent + 2, lineStart = true))
           }
         }
@@ -654,8 +667,10 @@ private[csf] object Printer {
       case _ => true
     }
 
-    private def chain(value: Term, indent: Int): ExprDoc = {
-      val (head, elements) = chainParts(value, indent)
+    private def chain(value: Term, indent: Int): ExprDoc = chain(chainStructure(value), indent)
+
+    private def chain(parts: Chain, indent: Int): ExprDoc = {
+      val (head, elements) = chainParts(parts, indent)
       val docs = ArrayBuffer.empty[Doc]
       var prefix = head
       var run = Doc.empty
@@ -676,8 +691,8 @@ private[csf] object Printer {
       ExprDoc(docs.head, Option.when(docs.size > 1)(Doc.cat(docs.iterator.drop(1).toVector)))
     }
 
-    private def chainParts(value: Term, indent: Int): (Doc, Vector[ExprDoc]) = {
-      val suffixes = ArrayBuffer.empty[Term]
+    private def chainStructure(value: Term): Chain = {
+      val suffixes = Vector.newBuilder[Term]
       var base = value
       var selections = 0
       var scanning = true
@@ -697,7 +712,11 @@ private[csf] object Printer {
           case _ => scanning = false
         }
       }
-      val breakable = selections >= 2 && expressionChain(value)
+      Chain(base, suffixes.result(), selections >= 2 && expressionChain(value))
+    }
+
+    private def chainParts(parts: Chain, indent: Int): (Doc, Vector[ExprDoc]) = {
+      val Chain(base, suffixes, breakable) = parts
       val baseDoc = suffixes.lastOption match {
         case Some(_: Term.Select) => selectQualifier(base, indent)
         case _ => atom(base, indent)

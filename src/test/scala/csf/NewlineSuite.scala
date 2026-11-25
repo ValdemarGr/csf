@@ -172,17 +172,17 @@ class NewlineSuite extends FunSuite {
 
   test("a unit result after a unit-valued binding needs no separator") {
     val expected = """val d = env.context.commands.addHandler[Unit](
-      |      for {
-      |        _ <- Setup.unit
-      |      } yield { (req, res) =>
-      |        val _ = ()
-      |        ()
-      |      }
-      |    )
+      |    for {
+      |      _ <- Setup.unit
+      |    } yield { (req, res) =>
+      |      val _ = ()
+      |      ()
+      |    }
+      |  )
       |""".stripMargin
 
     check(expected, expected)
-    check(expected.replace("val _ = ()\n        ()", "val _ = { () }; { () }"), expected)
+    check(expected.replace("val _ = ()\n      ()", "val _ = { () }; { () }"), expected)
   }
 
   test("a standalone unit expression follows a completed call with the ordinary gap") {

@@ -44,13 +44,13 @@ class LambdaDelimiterSuite extends FunSuite {
       val inline = if (header.isEmpty) body else s"$header $body"
       val opening = if (header.isEmpty) "{" else s"{ $header"
       assertEquals(format(s"val result=values.map($lambda)"), s"val result = values.map($inline)\n")
-      assertEquals(format(s"val result=values.map{$lambda}"), s"val result = values.map$opening\n    $body\n  }\n")
+      assertEquals(format(s"val result=values.map{$lambda}"), s"val result = values.map$opening\n  $body\n}\n")
     }
     val partial = format("val result=values.collect({case Some(value)=>use(value)})")
     assert(partial.contains("values.collect("), partial)
     assert(partial.contains("{"), partial)
     assertEquals(format("val result=values.collect{case Some(value)=>use(value)}"),
-      "val result = values.collect{ case Some(value) =>\n    use(value)\n  }\n")
+      "val result = values.collect{ case Some(value) =>\n  use(value)\n}\n")
   }
 
   test("single-expression lambda comments remain inside the source argument delimiters") {
@@ -120,7 +120,7 @@ class LambdaDelimiterSuite extends FunSuite {
     assertEquals(format("val result=values map (_.id)"), "val result = values map (_.id)\n")
     assertEquals(format("val result=values map {_.value}"), "val result =\n  values map{\n    _.value\n  }\n")
     assertEquals(format("val result=select(context)(_.value)"), "val result = select(context)(_.value)\n")
-    assertEquals(format("val result=select(context){_.value}"), "val result = select(context){\n    _.value\n  }\n")
+    assertEquals(format("val result=select(context){_.value}"), "val result = select(context){\n  _.value\n}\n")
     val wrapped = format("val result=values.map({{{_.value}}})")
     assert(wrapped.contains("values.map("), wrapped)
     assertEquals(wrapped.count(_ == '{'), 3, wrapped)
@@ -222,7 +222,7 @@ class LambdaDelimiterSuite extends FunSuite {
     val multiline = format("val result=call(value=>{prepare(value);use(value)},42)")
     val braced = format("val result=call({value=>prepare(value);use(value)},42)")
 
-    assert(multiline.contains("value =>\n      {"), multiline)
+    assert(multiline.contains("value =>\n    {"), multiline)
     assert(braced.contains("{ value =>"), braced)
   }
 

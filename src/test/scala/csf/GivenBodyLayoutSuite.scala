@@ -30,12 +30,12 @@ class GivenBodyLayoutSuite extends FunSuite {
     result
   }
 
-  test("context-bound given aliases wrap call arguments before breaking after equals") {
+  test("context-bound given aliases wrap call arguments with the opener next to equals") {
     val source = "given [H: TypeId as tidH, A: TypeId as tidA]: TypeId[HeaderRow[H,A]]=TypeIdHeaderRowImpl(tidH,tidA)"
 
     assertEquals(format(source),
       "given [H: TypeId as tidH, A: TypeId as tidA]: TypeId[HeaderRow[H, A]] = TypeIdHeaderRowImpl(\n" +
-        "    tidH,\n    tidA\n  )\n")
+        "  tidH,\n  tidA\n)\n")
   }
 
   test("short named anonymous and polymorphic given aliases remain inline") {

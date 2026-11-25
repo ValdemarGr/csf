@@ -31,7 +31,7 @@ class ParenthesesSuite extends FunSuite {
 
   test("parenthesized lambda arguments retain their braced bodies") {
     val result = format("object X { val result = values.map((value: Int) => { val next = value + 1; next }) }")
-    assert(result.contains("val result = values.map(\n      (value: Int) =>\n        {\n"), result)
+    assert(result.contains("val result = values.map(\n    (value: Int) =>\n      {\n"), result)
   }
 
   test("untyped lambda parameters omit redundant parentheses") {
@@ -42,7 +42,7 @@ class ParenthesesSuite extends FunSuite {
   test("short multiple parameter clauses stay on the header line") {
     val result = format("object X { val result = combine((left: Int, right: Int) => { use(left); use(right) }) }")
     assert(result.contains("combine("), result)
-    assert(result.contains("(left: Int, right: Int) =>\n        {\n"), result)
+    assert(result.contains("(left: Int, right: Int) =>\n      {\n"), result)
   }
 
   test("oversized lambda parameter clauses can wrap") {

@@ -52,14 +52,13 @@ class ValBodyLayoutSuite extends FunSuite {
     }
   }
 
-  test("call arguments wrap before the opening line moves below equals") {
+  test("call arguments wrap with the opener next to equals even when the opener overflows") {
     val source = "val x = MyDatatype(first, second, third)"
     val columns = "val x = MyDatatype(".length
+    val expected = "val x = MyDatatype(\n  first,\n  second,\n  third\n)\n"
 
-    assertEquals(format(source, columns),
-      "val x = MyDatatype(\n    first,\n    second,\n    third\n  )\n")
-    assertEquals(format(source, columns - 1),
-      "val x =\n  MyDatatype(\n    first,\n    second,\n    third\n  )\n")
+    assertEquals(format(source, columns), expected)
+    assertEquals(format(source, columns - 1), expected)
     assertEquals(format("val x = /* call */ MyDatatype(first, second, third)"),
       "val x =\n  /* call */\n  MyDatatype(first, second, third)\n")
   }
